@@ -1,7 +1,9 @@
 # app/login.py
 from __future__ import annotations
 
-from PyQt5.QtCore import pyqtSignal
+from PyQt5 import QtWidgets
+from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, Qt, QTimer
+from PyQt5.QtCore import QSequentialAnimationGroup
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QIcon
 from qfluentwidgets import ThemeColor, TransparentToolButton
@@ -50,6 +52,8 @@ class LoginPage(QWidget):
         # ===== 业务状态（原 login_logic.py 的内容）=====
         self.max_len = 6
         self.password = ""
+        self._pending_login = False
+        self._login_delay_ms = 450
 
         # ===== UI 初始化 =====
         self.apply_fluent_dot_style()
@@ -79,7 +83,6 @@ class LoginPage(QWidget):
 
         self.update_dots()
 
-        # ???6?????
         if self.is_complete():
             if self.verify():
                 self.login_success.emit()
@@ -99,6 +102,8 @@ class LoginPage(QWidget):
 
     # ===== UI/交互 =====
     def on_digit(self, n: int):
+        if self._pending_login:
+            return
         if len(self.password) >= self.max_len:
             return
         self.password += str(n)
@@ -107,10 +112,14 @@ class LoginPage(QWidget):
         # ???6?????
         if self.is_complete():
             if self.verify():
-                self.login_success.emit()
+                self._pending_login = True
+                self._set_inputs_enabled(False)
+                self._play_success_anim()
+                QTimer.singleShot(self._login_delay_ms, self._emit_login)
             else:
                 self.password = ""
                 self.update_dots()
+                self._shake_dots()
 
         # 可选：输入满 6 位自动验证
         # if self.is_complete():
@@ -118,10 +127,65 @@ class LoginPage(QWidget):
         #     print("login ok?", ok)
 
     def on_backspace(self):
+        if self._pending_login:
+            return
         if not self.password:
             return
         self.password = self.password[:-1]
         self.update_dots()
+
+    def _emit_login(self):
+        self.login_success.emit()
+
+    def _set_inputs_enabled(self, enabled: bool) -> None:
+        for i in range(10):
+            btn = self.findChild(QWidget, f"btn{i}")
+            if btn:
+                btn.setEnabled(enabled)
+        back_btn = self.findChild(QWidget, "btnBack")
+        if back_btn:
+            back_btn.setEnabled(enabled)
+
+    def _shake_dots(self) -> None:
+        target = getattr(self.ui, "dotsWrap", None)
+        if target is None:
+            target = getattr(self.ui, "dotsRow", None)
+        if target is None:
+            return
+
+        base = target.pos()
+        offsets = [QPoint(-6, 0), QPoint(6, 0), QPoint(-4, 0), QPoint(4, 0), QPoint(0, 0)]
+
+        group = QSequentialAnimationGroup(target)
+        for off in offsets:
+            anim = QPropertyAnimation(target, b"pos", target)
+            anim.setDuration(45)
+            anim.setEasingCurve(QEasingCurve.InOutSine)
+            anim.setStartValue(base)
+            anim.setEndValue(base + off)
+            group.addAnimation(anim)
+        group.start()
+        self._shake_anim = group
+
+    def _play_success_anim(self) -> None:
+        target = getattr(self.ui, "dotsWrap", None)
+        if target is None:
+            target = getattr(self.ui, "dotsRow", None)
+        if target is None:
+            return
+
+        base = target.pos()
+        offsets = [QPoint(0, 2), QPoint(0, -1), QPoint(0, 0)]
+        group = QSequentialAnimationGroup(target)
+        for off in offsets:
+            anim = QPropertyAnimation(target, b"pos", target)
+            anim.setDuration(90)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            anim.setStartValue(base)
+            anim.setEndValue(base + off)
+            group.addAnimation(anim)
+        group.start()
+        self._success_anim = group
 
     def apply_fluent_dot_style(self):
         accent = ThemeColor.PRIMARY.color()

@@ -153,11 +153,14 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setAutoFillBackground(True)
 
+        self._ensure_max_button()
         self.apply_background_style()
         self.apply_topbar_icons()
 
         if hasattr(self, "btnMin"):
             self.btnMin.clicked.connect(self.showMinimized)
+        if hasattr(self, "btnMax"):
+            self.btnMax.clicked.connect(self._toggle_maximize)
         if hasattr(self, "btnClose"):
             self.btnClose.clicked.connect(self.close)
         # Back button: close this page
@@ -176,9 +179,41 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         if hasattr(self, "btnMin"):
             self.btnMin.setIcon(FIF.MINIMIZE.icon(accent))
             self.btnMin.setIconSize(QSize(18, 18))
+        if hasattr(self, "btnMax"):
+            self.btnMax.setIcon(FIF.FULL_SCREEN.icon(accent))
+            self.btnMax.setIconSize(QSize(18, 18))
         if hasattr(self, "btnClose"):
             self.btnClose.setIcon(FIF.CLOSE.icon(accent))
             self.btnClose.setIconSize(QSize(18, 18))
+
+    def _ensure_max_button(self) -> None:
+        if hasattr(self, "btnMax"):
+            return
+        top_layout = getattr(self, "topBarLayout", None)
+        if top_layout is None:
+            return
+        btn_max = QtWidgets.QPushButton(self.frameTopBar)
+        btn_max.setObjectName("btnMax")
+        btn_max.setMinimumSize(QSize(36, 36))
+        btn_max.setMaximumSize(QSize(36, 36))
+        btn_max.setText("")
+        self.btnMax = btn_max
+
+        btn_close = getattr(self, "btnClose", None)
+        if btn_close:
+            idx = top_layout.indexOf(btn_close)
+            if idx >= 0:
+                top_layout.insertWidget(idx, btn_max)
+            else:
+                top_layout.addWidget(btn_max)
+        else:
+            top_layout.addWidget(btn_max)
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     def apply_background_style(self) -> None:
         qss = """

@@ -4,9 +4,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect
+from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect, QPushButton
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtCore import QSize, Qt, QPoint, QEvent
+from qfluentwidgets import FluentIcon as FIF, ThemeColor
 
 try:
     from .ui_loader import resource_path
@@ -64,6 +65,7 @@ class MainInterface(QWidget):
         self.setup_card_hover_shadow()
         self.bind_module_links()
         self.bind_window_controls()
+        self._ensure_max_button()
 
         # 1) Add a soft gradient-like shadow to rootWrap.
         root = self.findChild(QWidget, "rootWrap")
@@ -191,6 +193,59 @@ class MainInterface(QWidget):
         btn_exit = self.findChild(QWidget, "btnExit")
         if btn_exit:
             btn_exit.clicked.connect(self.close)
+
+        btn_max = self.findChild(QWidget, "btnMax")
+        if btn_max:
+            btn_max.clicked.connect(self._toggle_maximize)
+
+    def _ensure_max_button(self) -> None:
+        if self.findChild(QWidget, "btnMax"):
+            return
+
+        layout = getattr(self.ui, "horizontalLayout_3", None)
+        if layout is None:
+            return
+
+        btn_max = QPushButton(self)
+        btn_max.setObjectName("btnMax")
+        btn_max.setFixedSize(36, 36)
+
+        accent = ThemeColor.PRIMARY.color()
+        btn_max.setIcon(FIF.FULL_SCREEN.icon(accent))
+        btn_max.setIconSize(QSize(24, 24))
+        btn_max.setStyleSheet(
+            "QPushButton#btnMax {"
+            "border: 1px solid rgba(0,0,0,20);"
+            "border-radius: 8px;"
+            "background-color: rgba(255,255,255,180);"
+            "}"
+            "QPushButton#btnMax:hover {"
+            "background-color: rgba(255,255,255,210);"
+            "border: 1px solid rgba(0,0,0,40);"
+            "}"
+            "QPushButton#btnMax:pressed {"
+            "background-color: rgba(255,255,255,230);"
+            "padding-top: 1px;"
+            "}"
+        )
+
+        btn_exit = self.findChild(QWidget, "btnExit")
+        if btn_exit and btn_exit.parent() is self.ui.topBar:
+            idx = layout.indexOf(btn_exit)
+            if idx >= 0:
+                layout.insertWidget(idx, btn_max)
+            else:
+                layout.addWidget(btn_max)
+        else:
+            layout.addWidget(btn_max)
+
+        btn_max.clicked.connect(self._toggle_maximize)
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

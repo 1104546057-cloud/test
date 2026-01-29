@@ -14,7 +14,28 @@
 ```bash
 conda create -n Env11 python=3.9
 conda activate Env11
-pip install PyQt5 qfluentwidgets
+pip install PyQt5 
+pip install PyQt-Fluent-Widgets
+```
+
+## ??????MySQL?
+
+???????????
+
+- `UAV_DB_HOST`??? `127.0.0.1`?
+- `UAV_DB_PORT`??? `3306`?
+- `UAV_DB_USER`??? `root`?
+- `UAV_DB_PASSWORD`??? `123456`?
+- `UAV_DB_NAME`??? `Edgesidesystem`?
+
+PowerShell ???
+
+```powershell
+$env:UAV_DB_HOST="127.0.0.1"
+$env:UAV_DB_PORT="3306"
+$env:UAV_DB_USER="root"
+$env:UAV_DB_PASSWORD="123456"
+$env:UAV_DB_NAME="Edgesidesystem"
 ```
 
 ## 运行
