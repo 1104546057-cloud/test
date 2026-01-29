@@ -77,3 +77,8 @@ python -m PyQt5.uic.pyuic -x UI/forms/<name>.ui -o UI/generated/<name>.py
 
 ## 环境下载
 - pip install -r requirements.txt
+
+
+
+### 项目结构
+11111
