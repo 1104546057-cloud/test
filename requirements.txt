@@ -1,2 +1,2 @@
 PyQt5>=5.15.4
-qfluentwidgets>=1.4.0
+QFluentWidgets>=1.4.0
