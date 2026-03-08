@@ -15,7 +15,6 @@ from PyQt5.QtWidgets import QDialog, QWidget, QLineEdit, QFormLayout, QPushButto
 
 #CONFIG_DIR = Path.home() / "conf"  # 或者当前目录Path(".")
 CONFIG_DIR = Path(__file__).resolve().parent.parent
-print(CONFIG_DIR)
 CONFIG_PATH = CONFIG_DIR / "config.ini"
 
 # 首次运行标识文件名
@@ -35,6 +34,25 @@ _DEFAULTS = {
     "auto_backup_path": "./auto_backups",
     "manual_backup_path": "./manual_backups"
 }
+
+_ENV_OVERRIDES = {
+    "DB_HOST": ("UAV_DB_HOST", "MYSQL_HOST"),
+    "DB_PORT": ("UAV_DB_PORT", "MYSQL_PORT"),
+    "DB_USER": ("UAV_DB_USER", "MYSQL_USER"),
+    "DB_PASS": ("UAV_DB_PASSWORD", "MYSQL_PASSWORD"),
+    "DB_NAME": ("UAV_DB_NAME", "MYSQL_DATABASE"),
+}
+
+
+def _apply_env_overrides(values: Dict[str, str]) -> Dict[str, str]:
+    merged = dict(values)
+    for key, env_names in _ENV_OVERRIDES.items():
+        for env_name in env_names:
+            env_value = os.getenv(env_name)
+            if env_value not in (None, ""):
+                merged[key] = env_value
+                break
+    return merged
 
 
 def is_first_run(create_marker: bool = False) -> bool:
@@ -84,7 +102,8 @@ def load_config() -> Dict[str, str]:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         cfg.write(f)
     # 返回 dict
-    return {k: cfg.get(SECTION_MYSQL, k) for k in _DEFAULTS.keys()}
+    values = {k: cfg.get(SECTION_MYSQL, k) for k in _DEFAULTS.keys()}
+    return _apply_env_overrides(values)
 
 
 def save_config(values: Dict[str, str]) -> None:

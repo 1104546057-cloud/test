@@ -256,6 +256,11 @@ class BLL_InspectPoint(QMainWindow):
 
 
     def validate_required(self) -> bool:
+        area_id = self.ui.txt_AreaId.currentData()
+        if area_id is None:
+            self.ui.lab_Note.setText("请先创建并选择巡检区域后再保存点位！")
+            self.ui.lab_Note.setStyleSheet("color: red;")
+            return False
         # 定义必填字段（控件变量 -> 字段名称）
         required = {
             self.ui.txt_PointName: "点位名称",
@@ -884,8 +889,16 @@ class BLL_InspectPoint(QMainWindow):
         #     {"lng": "113.587890", "lat": "22.346789", "name": "中山大学珠海校区-食堂"},
         #     {"lng": "113.591234", "lat": "22.349876", "name": "中山大学珠海校区-宿舍区"}
         # ]
+        area_id = self.ui.txt_AreaId.currentData()
+        if area_id is None:
+            QMessageBox.information(self, "提示", "当前没有可用的巡检区域。")
+            return
+
         position_list=[]
-        recordlist = self.db.fetch_all("select * from InspectPoint where AreaID="+str(self.ui.txt_AreaId.currentData()))
+        recordlist = self.db.fetch_all(
+            "SELECT * FROM InspectPoint WHERE AreaID=%s",
+            (area_id,),
+        )
         for row, record in enumerate(recordlist):
             position = {
             "lng": str(record.get("Longitude", "")),  # 转为字符串，兼容数字/字符串类型

@@ -82,3 +82,8 @@ python -m PyQt5.uic.pyuic -x UI/forms/<name>.ui -o UI/generated/<name>.py
 
 ### 项目结构
 11111
+
+## MICCProject Note
+
+- `MICCProject1` is the PyQt5 implementation used by the main application.
+- `MICCProject2` is kept only as a migration reference and is not part of the runtime path.

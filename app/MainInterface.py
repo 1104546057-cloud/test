@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect, QPushButton, QMessageBox
+from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect, QPushButton, QMessageBox, QStyle
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtCore import QSize, Qt, QPoint, QEvent
 from qfluentwidgets import FluentIcon as FIF, ThemeColor
@@ -70,6 +70,7 @@ class MainInterface(QWidget):
         self.bind_window_controls()
         self._ensure_max_button()
         self._ensure_task_theme_button()
+        self._normalize_window_buttons()
 
         # 1) Add a soft gradient-like shadow to rootWrap.
         root = self.findChild(QWidget, "rootWrap")
@@ -105,7 +106,7 @@ class MainInterface(QWidget):
                 style = btn.styleSheet()
                 style = re.sub(r"background-size\s*:[^;]+;", "", style)
                 style = re.sub(
-                    rf"url\(:/[^\)]+/{re.escape(filename)}\)",
+                    rf"url\([^)]*{re.escape(filename)}\)",
                     lambda _: "none",
                     style,
                 )
@@ -115,7 +116,7 @@ class MainInterface(QWidget):
             style = btn.styleSheet()
             style = re.sub(r"background-size\s*:[^;]+;", "", style)
             style = re.sub(
-                rf"url\(:/[^\)]+/{re.escape(filename)}\)",
+                rf"url\([^)]*{re.escape(filename)}\)",
                 lambda _: f'url("{image_path}")',
                 style,
             )
@@ -229,7 +230,7 @@ class MainInterface(QWidget):
         if layout is None:
             return
 
-        btn_max = QPushButton(self)
+        btn_max = QPushButton(self.ui.topBar)
         btn_max.setObjectName("btnMax")
         btn_max.setFixedSize(36, 36)
 
@@ -277,7 +278,7 @@ class MainInterface(QWidget):
         if layout is None:
             return
 
-        btn_theme = QPushButton(self)
+        btn_theme = QPushButton(self.ui.topBar)
         btn_theme.setObjectName("btnTaskTheme")
         btn_theme.setFixedHeight(36)
         btn_theme.setMinimumWidth(62)
@@ -317,6 +318,94 @@ class MainInterface(QWidget):
         else:
             layout.addWidget(btn_theme)
 
+    def _normalize_window_buttons(self) -> None:
+        layout = getattr(self.ui, "horizontalLayout_3", None)
+        top_bar = getattr(self.ui, "topBar", None)
+        if layout is None or top_bar is None:
+            return
+
+        btn_min = self.findChild(QPushButton, "btnMin")
+        if btn_min is None:
+            btn_min = QPushButton(top_bar)
+            btn_min.setObjectName("btnMin")
+            btn_min.clicked.connect(self.showMinimized)
+        btn_max = self.findChild(QPushButton, "btnMax")
+        if btn_max is None:
+            self._ensure_max_button()
+            btn_max = self.findChild(QPushButton, "btnMax")
+        btn_exit = self.findChild(QPushButton, "btnExit")
+        if btn_exit is None:
+            btn_exit = QPushButton(top_bar)
+            btn_exit.setObjectName("btnExit")
+            btn_exit.clicked.connect(self.close)
+
+        if not btn_max:
+            return
+
+        for btn in (btn_min, btn_max, btn_exit):
+            if btn.parent() is not top_bar:
+                btn.setParent(top_bar)
+            btn.setFixedSize(36, 36)
+            btn.setText("")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(
+                f"QPushButton#{btn.objectName()} {{"
+                "background: transparent;"
+                "border: none;"
+                "padding: 6px;"
+                "border-radius: 8px;"
+                "}"
+                f"QPushButton#{btn.objectName()}:hover {{"
+                "background: rgba(0,0,0,24);"
+                "}"
+                f"QPushButton#{btn.objectName()}:pressed {{"
+                "background: rgba(0,0,0,38);"
+                "}"
+            )
+
+        btn_exit.setStyleSheet(
+            "QPushButton#btnExit {"
+            "background: transparent;"
+            "border: none;"
+            "padding: 6px;"
+            "border-radius: 8px;"
+            "}"
+            "QPushButton#btnExit:hover {"
+            "background: rgba(212, 45, 45, 180);"
+            "}"
+            "QPushButton#btnExit:pressed {"
+            "background: rgba(170, 36, 36, 220);"
+            "}"
+        )
+
+        style = self.style()
+        btn_min.setIcon(style.standardIcon(QStyle.SP_TitleBarMinButton))
+        btn_exit.setIcon(style.standardIcon(QStyle.SP_TitleBarCloseButton))
+        btn_min.setIconSize(QSize(16, 16))
+        btn_max.setIconSize(QSize(16, 16))
+        btn_exit.setIconSize(QSize(16, 16))
+        btn_min.setToolTip("最小化")
+        btn_max.setToolTip("最大化/还原")
+        btn_exit.setToolTip("关闭")
+        self._sync_max_button_icon()
+
+        btn_theme = self.findChild(QPushButton, "btnTaskTheme")
+        for w in (btn_theme, btn_min, btn_max, btn_exit):
+            if w and w.parent() is top_bar:
+                layout.removeWidget(w)
+        if btn_theme:
+            layout.addWidget(btn_theme)
+        layout.addWidget(btn_min)
+        layout.addWidget(btn_max)
+        layout.addWidget(btn_exit)
+
+    def _sync_max_button_icon(self) -> None:
+        btn_max = self.findChild(QPushButton, "btnMax")
+        if not btn_max:
+            return
+        icon_type = QStyle.SP_TitleBarNormalButton if self.isMaximized() else QStyle.SP_TitleBarMaxButton
+        btn_max.setIcon(self.style().standardIcon(icon_type))
+
     def _refresh_task_theme_button(self) -> None:
         btn = getattr(self, "_theme_button", None)
         if not btn:
@@ -338,6 +427,12 @@ class MainInterface(QWidget):
             self.showNormal()
         else:
             self.showMaximized()
+        self._sync_max_button_icon()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowStateChange:
+            self._sync_max_button_icon()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

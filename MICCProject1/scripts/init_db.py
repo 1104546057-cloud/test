@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import configparser
+import os
 import sys
 from pathlib import Path
 
@@ -13,13 +14,19 @@ def load_config(path: Path) -> dict:
     if "mysql" not in config:
         raise KeyError("[mysql] section not found in config.ini")
     section = config["mysql"]
-    return {
+    cfg = {
         "host": section.get("db_host", "127.0.0.1"),
         "port": section.getint("db_port", 3306),
         "user": section.get("db_user", "root"),
         "password": section.get("db_pass", ""),
         "db_name": section.get("db_name", "device_management"),
     }
+    cfg["host"] = os.getenv("UAV_DB_HOST", os.getenv("MYSQL_HOST", cfg["host"]))
+    cfg["port"] = int(os.getenv("UAV_DB_PORT", os.getenv("MYSQL_PORT", str(cfg["port"]))))
+    cfg["user"] = os.getenv("UAV_DB_USER", os.getenv("MYSQL_USER", cfg["user"]))
+    cfg["password"] = os.getenv("UAV_DB_PASSWORD", os.getenv("MYSQL_PASSWORD", cfg["password"]))
+    cfg["db_name"] = os.getenv("UAV_DB_NAME", os.getenv("MYSQL_DATABASE", cfg["db_name"]))
+    return cfg
 
 
 def get_driver():

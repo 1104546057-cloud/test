@@ -40,3 +40,17 @@ CREATE TABLE IF NOT EXISTS InspectRoute (
   CONSTRAINT fk_route_area FOREIGN KEY (AreaId) REFERENCES InspectArea(AreaId)
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS InspectRoutePoint (
+  RouteId      INT NOT NULL,
+  PointId      INT NOT NULL,
+  SortNo       INT NOT NULL,
+  StayTime     INT DEFAULT 10,
+  InspectAngle INT DEFAULT 0,
+  PRIMARY KEY (RouteId, PointId),
+  KEY idx_routepoint_route_sort (RouteId, SortNo),
+  CONSTRAINT fk_routepoint_route FOREIGN KEY (RouteId) REFERENCES InspectRoute(RouteId)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_routepoint_point FOREIGN KEY (PointId) REFERENCES InspectPoint(PointId)
+    ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
