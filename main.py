@@ -1,10 +1,13 @@
 # main.py
 import sys
+from PyQt5.QtCore import QCoreApplication, Qt
 from PyQt5.QtWidgets import QApplication
 from app.login import LoginPage
 from app.MainInterface import MainInterface
 
 def main() -> int:
+    # Required for QtWebEngine widgets (set before QApplication is created)
+    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
     login = LoginPage()
     main_win = MainInterface()

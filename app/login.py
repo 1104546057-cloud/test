@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PyQt5 import QtWidgets
-from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, Qt, QTimer
+from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, Qt, QTimer, QEvent, QSize
 from PyQt5.QtCore import QSequentialAnimationGroup
 from PyQt5.QtWidgets import QWidget
 from PyQt5.QtGui import QIcon
@@ -10,14 +10,14 @@ from qfluentwidgets import ThemeColor, TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
 
 try:
-    from .ui_loader import resource_path
+    from .UiLoader import resource_path
     from UI.generated.login import Ui_Form
 except ImportError:
     import sys
     from pathlib import Path
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from app.ui_loader import resource_path
+    from app.UiLoader import resource_path
     from UI.generated.login import Ui_Form
 
 
@@ -57,6 +57,7 @@ class LoginPage(QWidget):
 
         # ===== UI 初始化 =====
         self.apply_fluent_dot_style()
+        self.setup_window_controls()
 
         if USE_FLUENT_BUTTONS:
             for i in range(10):
@@ -186,6 +187,79 @@ class LoginPage(QWidget):
             group.addAnimation(anim)
         group.start()
         self._success_anim = group
+
+    def setup_window_controls(self) -> None:
+        # Replace native title bar with Fluent-style buttons
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+        top_bar = QtWidgets.QFrame(self)
+        top_bar.setObjectName("loginTopBar")
+        top_bar.setFixedHeight(36)
+        top_layout = QtWidgets.QHBoxLayout(top_bar)
+        top_layout.setContentsMargins(8, 4, 8, 4)
+        top_layout.setSpacing(6)
+        top_layout.addStretch(1)
+
+        btn_style = (
+            "QToolButton {"
+            "border-radius: 8px;"
+            "border: 1px solid rgba(0, 0, 0, 12);"
+            "background-color: rgba(255, 255, 255, 120);"
+            "}"
+            "QToolButton:hover {"
+            "border: 1px solid rgba(0, 0, 0, 22);"
+            "background-color: rgba(255, 255, 255, 150);"
+            "}"
+            "QToolButton:pressed {"
+            "background-color: rgba(255, 255, 255, 170);"
+            "}"
+        )
+
+        self.btnMinWin = TransparentToolButton(FIF.MINIMIZE, top_bar)
+        self.btnMinWin.setFixedSize(28, 28)
+        self.btnMinWin.setIconSize(QSize(16, 16))
+        self.btnMinWin.setStyleSheet(btn_style)
+        top_layout.addWidget(self.btnMinWin)
+
+        self.btnMaxWin = TransparentToolButton(FIF.FULL_SCREEN, top_bar)
+        self.btnMaxWin.setFixedSize(28, 28)
+        self.btnMaxWin.setIconSize(QSize(16, 16))
+        self.btnMaxWin.setStyleSheet(btn_style)
+        top_layout.addWidget(self.btnMaxWin)
+
+        self.btnCloseWin = TransparentToolButton(FIF.CLOSE, top_bar)
+        self.btnCloseWin.setFixedSize(28, 28)
+        self.btnCloseWin.setIconSize(QSize(16, 16))
+        self.btnCloseWin.setStyleSheet(btn_style)
+        top_layout.addWidget(self.btnCloseWin)
+
+        layout = getattr(self.ui, "verticalLayout_2", None)
+        if layout is not None:
+            layout.insertWidget(0, top_bar)
+
+        self.btnMinWin.clicked.connect(self.showMinimized)
+        self.btnMaxWin.clicked.connect(self._toggle_maximize)
+        self.btnCloseWin.clicked.connect(self.close)
+
+        top_bar.installEventFilter(self)
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def eventFilter(self, obj, event):
+        if hasattr(self, "loginTopBar") and obj is self.loginTopBar:
+            if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+                return True
+            if event.type() == QEvent.MouseMove and event.buttons() & Qt.LeftButton:
+                if hasattr(self, "_drag_pos"):
+                    self.move(event.globalPos() - self._drag_pos)
+                return True
+        return super().eventFilter(obj, event)
 
     def apply_fluent_dot_style(self):
         accent = ThemeColor.PRIMARY.color()

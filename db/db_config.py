@@ -14,5 +14,5 @@ def load_db_config() -> dict:
         "port": int(os.getenv("UAV_DB_PORT", "3306")),
         "user": os.getenv("UAV_DB_USER", "root"),
         "password": os.getenv("UAV_DB_PASSWORD", "123456"),
-        "database": os.getenv("UAV_DB_NAME", "Edgesidesystem"),
+        "database": os.getenv("UAV_DB_NAME", "device_management"),
     }

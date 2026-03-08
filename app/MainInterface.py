@@ -4,27 +4,29 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect, QPushButton
+from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect, QPushButton, QMessageBox
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtCore import QSize, Qt, QPoint, QEvent
 from qfluentwidgets import FluentIcon as FIF, ThemeColor
 
 try:
-    from .ui_loader import resource_path
+    from .UiLoader import resource_path
     from UI.generated.MainInterface import Ui_Form
-    from UI.pages.content_page import ContentPage
-    from UI.pages.rc_monitoring_page import RCMonitoringPage
-    from UI.pages.task_shell_page import TaskShellPage
+    from modules.basic_control.main import create_basic_control_page
+    from modules.status_monitoring.main import create_status_monitoring_page
+    from modules.task_management.main import create_task_management_page
+    from modules.asset_management.main import create_asset_management_window
 except ImportError:  # allow running as a script
     import sys
     from pathlib import Path
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
-    from app.ui_loader import resource_path
+    from app.UiLoader import resource_path
     from UI.generated.MainInterface import Ui_Form
-    from UI.pages.content_page import ContentPage
-    from UI.pages.rc_monitoring_page import RCMonitoringPage
-    from UI.pages.task_shell_page import TaskShellPage
+    from modules.basic_control.main import create_basic_control_page
+    from modules.status_monitoring.main import create_status_monitoring_page
+    from modules.task_management.main import create_task_management_page
+    from modules.asset_management.main import create_asset_management_window
 
 
 def add_shadow(w: QWidget, blur=45, dx=0, dy=8, alpha=60, color=None):
@@ -57,6 +59,7 @@ class MainInterface(QWidget):
         ui = Ui_Form()
         ui.setupUi(self)
         self.ui = ui
+        self._task_theme = "sky"
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setWindowIcon(QIcon(resource_path("assets/app.ico")))
@@ -66,6 +69,7 @@ class MainInterface(QWidget):
         self.bind_module_links()
         self.bind_window_controls()
         self._ensure_max_button()
+        self._ensure_task_theme_button()
 
         # 1) Add a soft gradient-like shadow to rootWrap.
         root = self.findChild(QWidget, "rootWrap")
@@ -157,20 +161,39 @@ class MainInterface(QWidget):
         if btn_task:
             btn_task.clicked.connect(self.open_task_management)
 
+        btn_asset = self.findChild(QWidget, "imgpush6")
+        if btn_asset:
+            btn_asset.clicked.connect(self.open_asset_management)
+
     def open_basic_control(self) -> None:
         if not hasattr(self, "_basic_control_page") or self._basic_control_page is None:
-            self._basic_control_page = ContentPage(self)
+            self._basic_control_page = create_basic_control_page(self)
         self._basic_control_page.show()
 
     def open_rc_monitoring(self) -> None:
         if not hasattr(self, "_rc_monitoring_page") or self._rc_monitoring_page is None:
-            self._rc_monitoring_page = RCMonitoringPage(self)
+            self._rc_monitoring_page = create_status_monitoring_page(self)
         self._rc_monitoring_page.show()
 
     def open_task_management(self) -> None:
         if not hasattr(self, "_task_management_page") or self._task_management_page is None:
-            self._task_management_page = TaskShellPage(self)
+            self._task_management_page = create_task_management_page(self)
+        self._apply_task_theme()
         self._task_management_page.show()
+
+    def open_asset_management(self) -> None:
+        try:
+            if (
+                not hasattr(self, "_asset_management_page")
+                or self._asset_management_page is None
+                or not self._asset_management_page.isVisible()
+            ):
+                self._asset_management_page = create_asset_management_window()
+            self._asset_management_page.show()
+            self._asset_management_page.raise_()
+            self._asset_management_page.activateWindow()
+        except Exception as exc:
+            QMessageBox.critical(self, "启动失败", f"无法打开设备综合管理模块:\n{exc}")
 
     def eventFilter(self, obj, event):
         if hasattr(self, "_card_shadow_targets") and obj in self._card_shadow_targets:
@@ -213,21 +236,26 @@ class MainInterface(QWidget):
         accent = ThemeColor.PRIMARY.color()
         btn_max.setIcon(FIF.FULL_SCREEN.icon(accent))
         btn_max.setIconSize(QSize(24, 24))
-        btn_max.setStyleSheet(
-            "QPushButton#btnMax {"
-            "border: 1px solid rgba(0,0,0,20);"
-            "border-radius: 8px;"
-            "background-color: rgba(255,255,255,180);"
-            "}"
-            "QPushButton#btnMax:hover {"
-            "background-color: rgba(255,255,255,210);"
-            "border: 1px solid rgba(0,0,0,40);"
-            "}"
-            "QPushButton#btnMax:pressed {"
-            "background-color: rgba(255,255,255,230);"
-            "padding-top: 1px;"
-            "}"
-        )
+
+        btn_min = self.findChild(QWidget, "btnMin")
+        if btn_min:
+            style = btn_min.styleSheet()
+            btn_max.setStyleSheet(style.replace("#btnMin", "#btnMax"))
+        else:
+            btn_max.setStyleSheet(
+                "QPushButton#btnMax {"
+                "background: transparent;"
+                "border: none;"
+                "padding: 6px;"
+                "}"
+                "QPushButton#btnMax:hover {"
+                "background: rgba(0,0,0,20);"
+                "border-radius: 8px;"
+                "}"
+                "QPushButton#btnMax:pressed {"
+                "background: rgba(0,0,0,35);"
+                "}"
+            )
 
         btn_exit = self.findChild(QWidget, "btnExit")
         if btn_exit and btn_exit.parent() is self.ui.topBar:
@@ -241,11 +269,83 @@ class MainInterface(QWidget):
 
         btn_max.clicked.connect(self._toggle_maximize)
 
+    def _ensure_task_theme_button(self) -> None:
+        if self.findChild(QWidget, "btnTaskTheme"):
+            return
+
+        layout = getattr(self.ui, "horizontalLayout_3", None)
+        if layout is None:
+            return
+
+        btn_theme = QPushButton(self)
+        btn_theme.setObjectName("btnTaskTheme")
+        btn_theme.setFixedHeight(36)
+        btn_theme.setMinimumWidth(62)
+        btn_theme.setToolTip("一键切换任务执行管理主题")
+
+        btn_min = self.findChild(QWidget, "btnMin")
+        if btn_min:
+            style = btn_min.styleSheet()
+            btn_theme.setStyleSheet(style.replace("#btnMin", "#btnTaskTheme"))
+        else:
+            btn_theme.setStyleSheet(
+                "QPushButton#btnTaskTheme {"
+                "background: transparent;"
+                "border: 1px solid rgba(0,0,0,25);"
+                "border-radius: 8px;"
+                "padding: 4px 10px;"
+                "}"
+                "QPushButton#btnTaskTheme:hover {"
+                "background: rgba(0,0,0,18);"
+                "}"
+                "QPushButton#btnTaskTheme:pressed {"
+                "background: rgba(0,0,0,30);"
+                "}"
+            )
+
+        self._theme_button = btn_theme
+        self._refresh_task_theme_button()
+        btn_theme.clicked.connect(self._toggle_task_theme)
+
+        btn_max = self.findChild(QWidget, "btnMax")
+        if btn_max and btn_max.parent() is self.ui.topBar:
+            idx = layout.indexOf(btn_max)
+            if idx >= 0:
+                layout.insertWidget(idx, btn_theme)
+            else:
+                layout.addWidget(btn_theme)
+        else:
+            layout.addWidget(btn_theme)
+
+    def _refresh_task_theme_button(self) -> None:
+        btn = getattr(self, "_theme_button", None)
+        if not btn:
+            return
+        btn.setText("蓝调" if self._task_theme == "sky" else "暖调")
+
+    def _toggle_task_theme(self) -> None:
+        self._task_theme = "sunset" if self._task_theme == "sky" else "sky"
+        self._refresh_task_theme_button()
+        self._apply_task_theme()
+
+    def _apply_task_theme(self) -> None:
+        page = getattr(self, "_task_management_page", None)
+        if page and hasattr(page, "set_theme"):
+            page.set_theme(self._task_theme)
+
     def _toggle_maximize(self) -> None:
         if self.isMaximized():
             self.showNormal()
         else:
             self.showMaximized()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        root = self.findChild(QWidget, "rootWrap")
+        if root:
+            margin = 18
+            rect = self.rect().adjusted(margin, margin, -margin, -margin)
+            root.setGeometry(rect)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:

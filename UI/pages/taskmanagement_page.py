@@ -167,7 +167,7 @@ class TaskManagementPage(QtWidgets.QWidget, Ui_TaskExecPage):
         for name in ["lblMapRangeKey", "lblMapAreaKey", "lblProgressKey"]:
             lbl = getattr(self, name, None)
             if lbl:
-                lbl.setStyleSheet("color: #8a96a6; font-size: 12px;")
+                lbl.setStyleSheet("color: #7a8796; font-size: 12px;")
 
         if hasattr(self, "lblTitle"):
             self.lblTitle.setText("\u4efb\u52a1\u6267\u884c\u7ba1\u7406")
@@ -180,50 +180,11 @@ class TaskManagementPage(QtWidgets.QWidget, Ui_TaskExecPage):
         if hasattr(self, "lblRadarTitle"):
             self.lblRadarTitle.setText("\u5b9e\u65f6\u96f7\u8fbe\u753b\u9762")
         if hasattr(self, "lblMapRangeKey"):
-            self.lblMapRangeKey.setText("\u5730\u56fe\u8303\u56f4")
+            self.lblMapRangeKey.setText("\u5730\u56fe\u8303\u56f4\uff1a")
         if hasattr(self, "lblMapAreaKey"):
-            self.lblMapAreaKey.setText("\u5730\u56fe\u9762\u79ef")
+            self.lblMapAreaKey.setText("\u5730\u56fe\u9762\u79ef\uff1a")
         if hasattr(self, "lblProgressKey"):
-            self.lblProgressKey.setText("\u5b8c\u6210\u5ea6")
-        if hasattr(self, "taskForm"):
-            self.taskForm.setVerticalSpacing(8)
-            self.taskForm.setHorizontalSpacing(12)
-        if hasattr(self, "taskFormLayout"):
-            self.taskFormLayout.setVerticalSpacing(8)
-            self.taskFormLayout.setHorizontalSpacing(12)
-        self._ensure_progress_bar()
-
-    def _ensure_progress_bar(self) -> None:
-        if hasattr(self, "_progress_bar") and self._progress_bar:
-            return
-        if not hasattr(self, "taskDetailLayout"):
-            return
-        self._progress_bar = QtWidgets.QProgressBar(self)
-        self._progress_bar.setFixedHeight(8)
-        self._progress_bar.setRange(0, 100)
-        self._progress_bar.setTextVisible(False)
-        self._progress_bar.setStyleSheet(
-            "QProgressBar {"
-            "background: rgba(120, 140, 160, 30);"
-            "border: none;"
-            "border-radius: 4px;"
-            "}"
-            "QProgressBar::chunk {"
-            "background: #3fa9f5;"
-            "border-radius: 4px;"
-            "}"
-        )
-        self.taskDetailLayout.addWidget(self._progress_bar)
-
-    def _set_progress_value(self, progress_text: str) -> None:
-        if not hasattr(self, "_progress_bar") or not self._progress_bar:
-            return
-        digits = "".join(ch for ch in progress_text if ch.isdigit())
-        try:
-            value = int(digits) if digits else 0
-        except ValueError:
-            value = 0
-        self._progress_bar.setValue(max(0, min(100, value)))
+            self.lblProgressKey.setText("\u4efb\u52a1\u5b8c\u6210\u5ea6\uff1a")
 
     def apply_placeholders(self) -> None:
         for name in ["lblMapPlaceholder", "lblVideoPlaceholder", "lblRadarPlaceholder"]:
@@ -260,11 +221,6 @@ class TaskManagementPage(QtWidgets.QWidget, Ui_TaskExecPage):
             btn = getattr(self, name, None)
             if btn:
                 btn.setStyleSheet(btn_qss)
-                shadow = QGraphicsDropShadowEffect(btn)
-                shadow.setBlurRadius(18)
-                shadow.setOffset(0, 4)
-                shadow.setColor(QColor(0, 0, 0, 35))
-                btn.setGraphicsEffect(shadow)
 
         if hasattr(self, "btnEStop"):
             self.btnEStop.setStyleSheet(
@@ -284,11 +240,6 @@ class TaskManagementPage(QtWidgets.QWidget, Ui_TaskExecPage):
                 "padding-top: 7px;"
                 "}"
             )
-            shadow = QGraphicsDropShadowEffect(self.btnEStop)
-            shadow.setBlurRadius(22)
-            shadow.setOffset(0, 5)
-            shadow.setColor(QColor(0, 0, 0, 40))
-            self.btnEStop.setGraphicsEffect(shadow)
 
         sidebar_btns = [
             "btnMapBuild",
@@ -487,14 +438,15 @@ class TaskManagementPage(QtWidgets.QWidget, Ui_TaskExecPage):
         return text_label
 
     def apply_demo_content(self) -> None:
-        self.set_map_preview("Route preview - 6 waypoints")
+        self.set_map_preview("Route preview · 6 waypoints")
         self.set_video_preview("Camera feed placeholder")
         self.set_radar_preview("Radar scan placeholder")
         self.set_task_info(
-            range_text="2.4 km",
-            area_text="1.2 km^2",
-            progress_text="68%",
+            range_text="\u4efb\u52a1\u8303\u56f4\uff1a2.4 km",
+            area_text="\u4efb\u52a1\u9762\u79ef\uff1a1.2 km\u00b2",
+            progress_text="\u4efb\u52a1\u5b8c\u6210\u5ea6\uff1a68%",
         )
+
     def set_map_preview(self, text: str) -> None:
         placeholder = getattr(self, "lblMapPlaceholder", None)
         if not placeholder:
@@ -525,14 +477,13 @@ class TaskManagementPage(QtWidgets.QWidget, Ui_TaskExecPage):
     def set_task_info(self, range_text: str, area_text: str, progress_text: str) -> None:
         if hasattr(self, "lblMapRangeVal"):
             self.lblMapRangeVal.setText(range_text)
-            self.lblMapRangeVal.setStyleSheet("color: #2f3a46; font-size: 12px; border: none;")
+            self.lblMapRangeVal.setStyleSheet("color: #3b4552; font-size: 12px; border: none;")
         if hasattr(self, "lblMapAreaVal"):
             self.lblMapAreaVal.setText(area_text)
-            self.lblMapAreaVal.setStyleSheet("color: #2f3a46; font-size: 12px; border: none;")
+            self.lblMapAreaVal.setStyleSheet("color: #3b4552; font-size: 12px; border: none;")
         if hasattr(self, "lblProgressVal"):
             self.lblProgressVal.setText(progress_text)
-            self.lblProgressVal.setStyleSheet("color: #1f2b38; font-size: 14px; font-weight: 700; border: none;")
-            self._set_progress_value(progress_text)
+            self.lblProgressVal.setStyleSheet("color: #3b4552; font-size: 12px; font-weight: 600; border: none;")
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
