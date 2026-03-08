@@ -108,7 +108,9 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.cmd_vel_pub.publish(roslibpy.Message(msg))
 
     def start_forward(self):
+        print("DEBUG: start_forward called")
         if not self._require_ros():
+            print("DEBUG: _require_ros returned False")
             return
         self.current_linear_x = 0.20
         self.current_angular_z = 0.0
@@ -171,6 +173,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
             self.cmd_vel_pub.publish(roslibpy.Message(msg))
 
     def _require_ros(self) -> bool:
+        print(f"DEBUG: _require_ros check, _ros_ready={self._ros_ready}, cmd_vel_pub={self.cmd_vel_pub is not None}")
         if self._ros_ready:
             return True
         if hasattr(self, "label"):
@@ -210,6 +213,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
             self.label.setText("ROS 已连接，等待图像...")
 
         self.cmd_vel_pub = roslibpy.Topic(self.ros, "/cmd_vel", "geometry_msgs/Twist")
+        self.cmd_vel_pub.advertise()
         self.image_topic = roslibpy.Topic(
             self.ros,
             "/camera/rgb/image_raw",
@@ -221,6 +225,11 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         try:
             if self.image_topic:
                 self.image_topic.unsubscribe()
+        except Exception:
+            pass
+        try:
+            if self.cmd_vel_pub:
+                self.cmd_vel_pub.unadvertise()
         except Exception:
             pass
         try:
