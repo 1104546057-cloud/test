@@ -242,9 +242,9 @@ class TaskExecutionManagementPage(QWidget, Ui_TaskExecutionManagement):
                 self._open_inspect_mag()
                 return
             elif key == "detect":
-                from modules.task_management.pages.target_recognition_page import TargetRecognitionPage
+                from modules.task_management.pages.TargetRecognition_new_page import TargetRecognitionNewPage
 
-                self._pages[key] = TargetRecognitionPage()
+                self._pages[key] = TargetRecognitionNewPage()
             elif key == "track":
                 from modules.task_management.pages.target_tracking_page import TargetTrackingPage
 
