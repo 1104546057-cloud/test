@@ -73,7 +73,9 @@ class BLL_InspectPoint(QMainWindow):
         self.web_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # 将web_view添加到GroupBox的布局中
         layout.addWidget(self.web_view)
-        self._init_nav()
+        # Remove step controls (区域->点位->路线 + arrows/close) per latest UI request.
+        # Keep business flow callbacks, but no longer render this nav bar.
+        # self._init_nav()
 
     def _init_nav(self) -> None:
         self._nav_bar = QWidget(self)

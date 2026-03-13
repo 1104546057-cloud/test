@@ -40,10 +40,15 @@ class BLL_InspectRoute(QDialog):
         self._drag_row_from = -1
         self._drag_start_pos = None
         self._row_dragging = False
+        self._route_point_table_checked = False
+        self._route_point_table_exists = False
+        self._route_point_table_warned = False
         self.init_ui()
         self.load_inspectroute() #加载巡检点位
         self.load_inspectarea() # 加载巡检区域
-        self._init_nav()
+        # Remove step controls (区域->点位->路线 + arrows/close) per latest UI request.
+        # Keep business flow callbacks, but no longer render this nav bar.
+        # self._init_nav()
         #self.setFixedSize(1639, 636)
 
     def _init_nav(self) -> None:
@@ -976,7 +981,8 @@ class BLL_InspectRoute(QDialog):
             if ins_item is None:
                 return
             self.routeid = int(ins_item.text())
-            self.db.execute_query("DELETE FROM InspectRoutePoint WHERE RouteId = %s", (self.routeid,))
+            if self._ensure_route_point_table(show_tip=False):
+                self.db.execute_query("DELETE FROM InspectRoutePoint WHERE RouteId = %s", (self.routeid,))
             i = self.db.execute_query("DELETE FROM InspectRoute WHERE RouteId = %s", (self.routeid,))
             if (i>0):
                 self.ui.lab_Note.setText("巡检路线删除成功！")
@@ -1047,6 +1053,22 @@ class BLL_InspectRoute(QDialog):
         self._clear_route_map()
 
 
+    def _ensure_route_point_table(self, show_tip: bool = True) -> bool:
+        if self._route_point_table_checked:
+            if (not self._route_point_table_exists) and show_tip and (not self._route_point_table_warned):
+                QMessageBox.warning(self, "提示", "缺少数据表 InspectRoutePoint，请先执行数据库初始化脚本。")
+                self._route_point_table_warned = True
+            return self._route_point_table_exists
+
+        rows = self.db.fetch_all("SHOW TABLES LIKE 'InspectRoutePoint'")
+        self._route_point_table_checked = True
+        self._route_point_table_exists = bool(rows)
+        if (not self._route_point_table_exists) and show_tip and (not self._route_point_table_warned):
+            QMessageBox.warning(self, "提示", "缺少数据表 InspectRoutePoint，请先执行数据库初始化脚本。")
+            self._route_point_table_warned = True
+        return self._route_point_table_exists
+
+
     def load_inspectPointByAreaId(self, areaid) -> None:
         table = getattr(self.ui, "tv_InspectPoint1", None)
         if table is None:
@@ -1068,6 +1090,12 @@ class BLL_InspectRoute(QDialog):
             table.setItem(row, 2, QTableWidgetItem(lng_lat))
 
     def load_inspectPointByRouteId(self, route_id) -> None:
+        if not self._ensure_route_point_table(show_tip=False):
+            table = getattr(self.ui, "tv_InspectPoint2", None)
+            if table is not None:
+                table.setRowCount(0)
+            self._clear_route_map()
+            return
         table = getattr(self.ui, "tv_InspectPoint2", None)
         if table is None:
             return
@@ -1114,6 +1142,8 @@ class BLL_InspectRoute(QDialog):
         self._refresh_route_map(route_id)
 
     def _persist_route_point_order(self) -> None:
+        if not self._ensure_route_point_table(show_tip=False):
+            return
         if not self.routeid:
             return
         table = self.ui.tv_InspectPoint2
@@ -1135,6 +1165,8 @@ class BLL_InspectRoute(QDialog):
         self._refresh_route_map(self.routeid)
 
     def _refresh_route_metrics_after_relation_change(self) -> None:
+        if not self._ensure_route_point_table(show_tip=False):
+            return
         if not self.routeid:
             return
         point_count, path_length, ins_duration = self.calculate_route_metrics(self.routeid)
@@ -1152,6 +1184,8 @@ class BLL_InspectRoute(QDialog):
         self._persist_route_point_order()
 
     def add_point_to_route(self) -> None:
+        if not self._ensure_route_point_table(show_tip=True):
+            return
         if not self.routeid:
             QMessageBox.warning(self, "提示", "请先新建并保存路线")
             return
@@ -1173,7 +1207,8 @@ class BLL_InspectRoute(QDialog):
             "SELECT IFNULL(MAX(SortNo), 0) AS max_sort FROM InspectRoutePoint WHERE RouteId=%s",
             (self.routeid,),
         )
-        sort_no = int(max_sort[0].get("max_sort", 0)) + 1
+        sort_seed = max_sort[0].get("max_sort", 0) if max_sort else 0
+        sort_no = int(sort_seed or 0) + 1
         self.db.execute_query(
             "INSERT INTO InspectRoutePoint (RouteId, PointId, SortNo, StayTime, InspectAngle) VALUES (%s, %s, %s, 10, 0)",
             (self.routeid, point_id, sort_no),
@@ -1187,6 +1222,8 @@ class BLL_InspectRoute(QDialog):
         self.adjust_sort(1)
 
     def adjust_sort(self, step: int) -> None:
+        if not self._ensure_route_point_table(show_tip=False):
+            return
         if not self.routeid:
             return
         selected_row = self.ui.tv_InspectPoint2.currentRow()
@@ -1215,6 +1252,8 @@ class BLL_InspectRoute(QDialog):
         self._refresh_route_metrics_after_relation_change()
 
     def remove_point_from_route(self) -> None:
+        if not self._ensure_route_point_table(show_tip=True):
+            return
         if not self.routeid:
             return
         selected_row = self.ui.tv_InspectPoint2.currentRow()
@@ -1246,6 +1285,8 @@ class BLL_InspectRoute(QDialog):
         self._refresh_route_metrics_after_relation_change()
 
     def save_relation(self) -> None:
+        if not self._ensure_route_point_table(show_tip=True):
+            return
         if not self.routeid:
             QMessageBox.warning(self, "提示", "请先选择路线")
             return
@@ -1294,6 +1335,8 @@ class BLL_InspectRoute(QDialog):
         return radius * c
 
     def calculate_route_metrics(self, route_id: int):
+        if not self._ensure_route_point_table(show_tip=False):
+            return 0, 0.0, 0.0
         rows = self.db.fetch_all(
             """
             SELECT rp.PointId, rp.SortNo, rp.StayTime, ip.Longitude, ip.Latitude

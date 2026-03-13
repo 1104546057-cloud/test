@@ -96,7 +96,11 @@ class DBHelper:
             cursor = self._get_cursor()
             cursor.execute(query, params or ())
 
-            if query.strip().lower().startswith("select"):
+            # mysql.connector 会对 SHOW/DESCRIBE/EXPLAIN 等返回结果集；
+            # 统一按 cursor.with_rows 判断，避免 "Unread result found"。
+            if getattr(cursor, "with_rows", False):
+                return cursor.fetchall()
+            if query.strip().lower().startswith(("select", "show", "describe", "explain")):
                 return cursor.fetchall()
 
             self.conn.commit()

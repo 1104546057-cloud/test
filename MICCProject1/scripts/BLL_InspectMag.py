@@ -1,9 +1,24 @@
-﻿import sys
+﻿import os
+import sys
+from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon, QPixmap
-from PyQt5.QtWidgets import QApplication, QMainWindow
+from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QCloseEvent, QIcon, QPixmap
+from PyQt5.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QVBoxLayout,
+)
 from qfluentwidgets import PushButton
 
 project_root = Path(__file__).resolve().parent.parent
@@ -14,7 +29,144 @@ from MICCProject1.scripts.BLL_InspectArea import BLL_InspectArea
 from MICCProject1.scripts.BLL_InspectPoint_V4 import BLL_InspectPoint
 from MICCProject1.scripts.BLL_InspectRoute_V1 import BLL_InspectRoute
 from MICCProject1.scripts.DBHelper import DBHelper
+from MICCProject1.scripts.patrol_runtime import PatrolService, PatrolState, create_executor
 from MICCProject1.ui.Frm_InspectMag import Ui_Frm_InspectMag
+
+
+class PatrolExecutionWindow(QDialog):
+    def __init__(self, owner: "BLL_InspectMag"):
+        super().__init__(owner)
+        self.owner = owner
+        self.setWindowTitle("巡逻执行窗口")
+        self.resize(980, 660)
+        self._build_ui()
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._on_refresh_tick)
+        self._on_rate_changed(self.cmbRefreshRate.currentIndex())
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(8)
+
+        self.lblTitle = QLabel("巡检执行总览", self)
+        self.lblTitle.setAlignment(Qt.AlignCenter)
+        root.addWidget(self.lblTitle)
+
+        self.grpMeta = QFrame(self)
+        meta_layout = QGridLayout(self.grpMeta)
+        meta_layout.setContentsMargins(8, 8, 8, 8)
+        meta_layout.addWidget(QLabel("当前区域"), 0, 0)
+        self.lblArea = QLabel("-", self.grpMeta)
+        meta_layout.addWidget(self.lblArea, 0, 1)
+        meta_layout.addWidget(QLabel("当前路线"), 1, 0)
+        self.lblRoute = QLabel("-", self.grpMeta)
+        meta_layout.addWidget(self.lblRoute, 1, 1)
+        root.addWidget(self.grpMeta)
+
+        self.lblCurrent = QLabel("执行中: -", self)
+        root.addWidget(self.lblCurrent)
+
+        self.frmMap = QFrame(self)
+        map_layout = QVBoxLayout(self.frmMap)
+        map_layout.setContentsMargins(8, 8, 8, 8)
+        self.lblMap = QLabel("导航实时地图(预留): 等待刷新", self.frmMap)
+        self.lblMap.setMinimumHeight(220)
+        self.lblMap.setAlignment(Qt.AlignCenter)
+        map_layout.addWidget(self.lblMap)
+        root.addWidget(self.frmMap)
+
+        ctrl = QHBoxLayout()
+        self.btnStart = PushButton("开始巡逻", self)
+        self.btnPause = PushButton("暂停", self)
+        self.btnResume = PushButton("恢复", self)
+        self.btnStop = PushButton("停止", self)
+        self.btnEmergency = PushButton("紧急制动", self)
+        self.cmbRefreshRate = QComboBox(self)
+        self.cmbRefreshRate.addItem("1秒", userData=1000)
+        self.cmbRefreshRate.addItem("2秒", userData=2000)
+        self.cmbRefreshRate.addItem("5秒", userData=5000)
+        self.cmbRefreshRate.addItem("10秒", userData=10000)
+        self.cmbRefreshRate.setCurrentIndex(2)
+
+        for b in (self.btnStart, self.btnPause, self.btnResume, self.btnStop, self.btnEmergency):
+            b.setMinimumHeight(34)
+            ctrl.addWidget(b)
+        ctrl.addWidget(QLabel("刷新率", self))
+        ctrl.addWidget(self.cmbRefreshRate)
+        root.addLayout(ctrl)
+
+        self.lblState = QLabel("状态: IDLE", self)
+        root.addWidget(self.lblState)
+
+        self.progress = QProgressBar(self)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        root.addWidget(self.progress)
+
+        self.txtLog = QPlainTextEdit(self)
+        self.txtLog.setReadOnly(True)
+        self.txtLog.setMinimumHeight(140)
+        root.addWidget(self.txtLog)
+
+        self.setStyleSheet(
+            "QFrame { background: rgba(255,255,255,0.9); border:1px solid rgba(34,64,112,18); border-radius:8px; }"
+            "QLabel { font: 12px 'Microsoft YaHei'; color:#273849; }"
+        )
+
+        self.btnStart.clicked.connect(self.owner._start_patrol)
+        self.btnPause.clicked.connect(self.owner._pause_patrol)
+        self.btnResume.clicked.connect(self.owner._resume_patrol)
+        self.btnStop.clicked.connect(self.owner._stop_patrol)
+        self.btnEmergency.clicked.connect(self.owner._emergency_stop)
+        self.cmbRefreshRate.currentIndexChanged.connect(self._on_rate_changed)
+
+    def _on_rate_changed(self, _idx: int) -> None:
+        interval = int(self.cmbRefreshRate.currentData() or 5000)
+        self._refresh_timer.setInterval(interval)
+        if self._refresh_timer.isActive():
+            self._refresh_timer.start()
+
+    def _on_refresh_tick(self) -> None:
+        now = datetime.now().strftime("%H:%M:%S")
+        self.lblMap.setText(f"导航实时地图(预留)\n最近刷新: {now}")
+
+    def start_refresh(self) -> None:
+        if not self._refresh_timer.isActive():
+            self._refresh_timer.start()
+            self._on_refresh_tick()
+
+    def stop_refresh(self) -> None:
+        self._refresh_timer.stop()
+
+    def set_route_info(self, area_name: str, route_name: str) -> None:
+        self.lblArea.setText(area_name or "-")
+        self.lblRoute.setText(route_name or "-")
+
+    def set_state(self, state: str) -> None:
+        self.lblState.setText(f"状态: {state}")
+
+    def set_progress(self, current: int, total: int, point_name: str) -> None:
+        pct = int((current / total) * 100) if total else 0
+        self.progress.setValue(pct)
+        self.lblCurrent.setText(f"执行中: 点位 {current}/{total} - {point_name}")
+
+    def append_log(self, msg: str) -> None:
+        self.txtLog.appendPlainText(msg)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self.owner and self.owner._executor.state == PatrolState.RUNNING:
+            ans = QMessageBox.question(
+                self,
+                "提示",
+                "巡逻仍在执行中，关闭窗口不会停止任务。是否仅关闭此窗体？",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                event.ignore()
+                return
+        super().closeEvent(event)
 
 
 class BLL_InspectMag(QMainWindow):
@@ -27,11 +179,18 @@ class BLL_InspectMag(QMainWindow):
         self._inspect_area = None
         self._inspect_point = None
         self._inspect_route = None
+        self._runtime_controls_ready = False
+        self._exec_win = None
 
         self._apply_window_icon()
         self._replace_buttons()
+        self._build_runtime_panel()
         self._bind_actions()
         self.load_inspectarea()
+
+        self._patrol_service = PatrolService(self.db)
+        self._executor = create_executor(self._executor_mode(), self)
+        self._bind_executor_events()
 
     def _apply_window_icon(self) -> None:
         icon_path = Path(__file__).resolve().parents[2] / "assets" / "robot.png"
@@ -59,11 +218,116 @@ class BLL_InspectMag(QMainWindow):
             layout.insertWidget(idx, btn)
             setattr(self.ui, name, btn)
 
+    def _build_runtime_panel(self) -> None:
+        if self._runtime_controls_ready:
+            return
+        self._runtime_controls_ready = True
+
+        panel = QFrame(self.ui.centralWidget)
+        panel.setObjectName("runtimePanel")
+        vbox = QVBoxLayout(panel)
+        vbox.setContentsMargins(10, 10, 10, 10)
+        vbox.setSpacing(8)
+
+        top = QHBoxLayout()
+
+        self.cmbExecutorMode = QComboBox(panel)
+        self.cmbExecutorMode.addItem("Windows模拟", userData="mock")
+        self.cmbExecutorMode.addItem("ROS执行器(预留)", userData="ros")
+        if self._executor_mode() == "ros":
+            self.cmbExecutorMode.setCurrentIndex(1)
+        top.addWidget(self.cmbExecutorMode)
+
+        self.btn_StartPatrol = PushButton("开始巡逻", panel)
+        self.btn_PausePatrol = PushButton("暂停", panel)
+        self.btn_ResumePatrol = PushButton("恢复", panel)
+        self.btn_StopPatrol = PushButton("停止", panel)
+        self.btn_Emergency = PushButton("紧急制动", panel)
+        self.btnOpenExecWindow = PushButton("打开执行窗体", panel)
+        for b in (
+            self.btn_StartPatrol,
+            self.btn_PausePatrol,
+            self.btn_ResumePatrol,
+            self.btn_StopPatrol,
+            self.btn_Emergency,
+            self.btnOpenExecWindow,
+        ):
+            b.setMinimumHeight(36)
+            top.addWidget(b)
+        vbox.addLayout(top)
+
+        self.lbl_Runtime = QLabel("状态：IDLE", panel)
+        self.lbl_Runtime.setObjectName("lblRuntime")
+        vbox.addWidget(self.lbl_Runtime)
+
+        self.progressPatrol = QProgressBar(panel)
+        self.progressPatrol.setRange(0, 100)
+        self.progressPatrol.setValue(0)
+        vbox.addWidget(self.progressPatrol)
+
+        self.txt_RuntimeLog = QPlainTextEdit(panel)
+        self.txt_RuntimeLog.setReadOnly(True)
+        self.txt_RuntimeLog.setPlaceholderText("巡逻执行日志...")
+        self.txt_RuntimeLog.setMinimumHeight(120)
+        vbox.addWidget(self.txt_RuntimeLog)
+
+        self.ui.verticalLayout.addWidget(panel)
+
+        panel.setStyleSheet(
+            "QFrame#runtimePanel {"
+            "background: rgba(255,255,255,0.85);"
+            "border: 1px solid rgba(34,64,112,18);"
+            "border-radius: 10px;"
+            "}"
+            "QLabel#lblRuntime {"
+            "font: 600 12px 'Microsoft YaHei';"
+            "color: #2f3a4a;"
+            "}"
+        )
+
     def _bind_actions(self) -> None:
         self.ui.btn_InspectArea.clicked.connect(self.on_btn_InspectArea_click)
         self.ui.btn_InspectPoint.clicked.connect(self.on_btn_InspectPoint_click)
         self.ui.btn_InspectRoute.clicked.connect(self.on_btn_InspectRoute_click)
         self.ui.txt_InspectArea.currentIndexChanged.connect(self._on_area_changed)
+        self.ui.txt_InspectRoute.currentIndexChanged.connect(self._on_route_changed)
+
+        self.btn_StartPatrol.clicked.connect(self._start_patrol)
+        self.btn_PausePatrol.clicked.connect(self._pause_patrol)
+        self.btn_ResumePatrol.clicked.connect(self._resume_patrol)
+        self.btn_StopPatrol.clicked.connect(self._stop_patrol)
+        self.btn_Emergency.clicked.connect(self._emergency_stop)
+        self.btnOpenExecWindow.clicked.connect(self._show_execution_window)
+        self.cmbExecutorMode.currentIndexChanged.connect(self._on_executor_mode_changed)
+
+    def _bind_executor_events(self) -> None:
+        self._executor.state_changed.connect(self._on_executor_state_changed)
+        self._executor.progress_changed.connect(self._on_executor_progress)
+        self._executor.log_emitted.connect(self._append_runtime_log)
+        self._executor.finished.connect(self._on_executor_finished)
+
+    def _executor_mode(self) -> str:
+        return os.getenv("UAV_PATROL_EXECUTOR", "mock")
+
+    def _on_executor_mode_changed(self, _idx: int) -> None:
+        mode = self.cmbExecutorMode.currentData() or "mock"
+        if getattr(self._executor, "state", PatrolState.IDLE) == PatrolState.RUNNING:
+            QMessageBox.warning(self, "提示", "请先停止巡逻，再切换执行器。")
+            return
+        self._executor = create_executor(mode, self)
+        self._bind_executor_events()
+        self._append_runtime_log(f"已切换执行器模式: {mode}")
+
+    def _show_execution_window(self) -> None:
+        if self._exec_win is None:
+            self._exec_win = PatrolExecutionWindow(self)
+        area = self.ui.txt_InspectArea.currentText()
+        route = self.ui.txt_InspectRoute.currentText()
+        self._exec_win.set_route_info(area, route)
+        self._exec_win.set_state(self._executor.state.value)
+        self._exec_win.show()
+        self._exec_win.raise_()
+        self._exec_win.activateWindow()
 
     def on_btn_InspectArea_click(self):
         if self._inspect_area is None or not self._inspect_area.isVisible():
@@ -93,6 +357,7 @@ class BLL_InspectMag(QMainWindow):
             self.ui.txt_InspectArea.addItem("暂无巡检区域", userData=None)
             self.ui.txt_InspectRoute.clear()
             self.ui.txt_InspectRoute.addItem("暂无巡检路线", userData=None)
+            self.ui.statusLabel.setText("当前没有可用巡检数据")
             return
 
         for row in records:
@@ -105,6 +370,7 @@ class BLL_InspectMag(QMainWindow):
         self.ui.txt_InspectRoute.clear()
         if area_id is None:
             self.ui.txt_InspectRoute.addItem("暂无巡检路线", userData=None)
+            self.ui.statusLabel.setText("请选择要进入的模块")
             return
 
         routes = self.db.fetch_all(
@@ -113,10 +379,85 @@ class BLL_InspectMag(QMainWindow):
         )
         if not routes:
             self.ui.txt_InspectRoute.addItem("暂无巡检路线", userData=None)
+            self.ui.statusLabel.setText("当前区域无可执行路线")
             return
 
         for row in routes:
             self.ui.txt_InspectRoute.addItem(row["RouteName"], userData=row["RouteId"])
+
+        self._on_route_changed(self.ui.txt_InspectRoute.currentIndex())
+
+    def _on_route_changed(self, _idx: int) -> None:
+        route_id = self.ui.txt_InspectRoute.currentData()
+        if route_id is None:
+            self.ui.statusLabel.setText("请选择要进入的模块")
+            return
+        self.ui.statusLabel.setText(f"当前路线ID: {route_id}（可执行巡逻任务）")
+        if self._exec_win is not None:
+            self._exec_win.set_route_info(self.ui.txt_InspectArea.currentText(), self.ui.txt_InspectRoute.currentText())
+
+    def _start_patrol(self) -> None:
+        route_id = self.ui.txt_InspectRoute.currentData()
+        if route_id is None:
+            QMessageBox.warning(self, "提示", "请先选择一条路线。")
+            return
+
+        plan, err = self._patrol_service.load_plan(int(route_id))
+        if err:
+            QMessageBox.warning(self, "提示", err)
+            return
+
+        self.progressPatrol.setValue(0)
+        self._executor.load_plan(plan)
+        if not self._executor.start():
+            QMessageBox.warning(self, "提示", "巡逻启动失败。")
+            return
+
+        self._show_execution_window()
+        if self._exec_win is not None:
+            self._exec_win.start_refresh()
+
+    def _pause_patrol(self) -> None:
+        self._executor.pause()
+
+    def _resume_patrol(self) -> None:
+        self._executor.resume()
+
+    def _stop_patrol(self) -> None:
+        self._executor.stop()
+        if self._exec_win is not None:
+            self._exec_win.stop_refresh()
+
+    def _emergency_stop(self) -> None:
+        self._executor.emergency_stop()
+        if self._exec_win is not None:
+            self._exec_win.stop_refresh()
+
+    def _on_executor_state_changed(self, state: str) -> None:
+        self.lbl_Runtime.setText(f"状态：{state}")
+        if self._exec_win is not None:
+            self._exec_win.set_state(state)
+
+    def _on_executor_progress(self, current: int, total: int, point_name: str) -> None:
+        pct = int((current / total) * 100) if total else 0
+        self.progressPatrol.setValue(pct)
+        self.ui.statusLabel.setText(f"执行中：点位 {current}/{total} - {point_name}")
+        if self._exec_win is not None:
+            self._exec_win.set_progress(current, total, point_name)
+
+    def _append_runtime_log(self, message: str) -> None:
+        self.txt_RuntimeLog.appendPlainText(message)
+        if self._exec_win is not None:
+            self._exec_win.append_log(message)
+
+    def _on_executor_finished(self, success: bool, reason: str) -> None:
+        if success:
+            self.ui.statusLabel.setText("巡逻已完成")
+            self.progressPatrol.setValue(100)
+        else:
+            self.ui.statusLabel.setText(f"巡逻结束：{reason}")
+        if self._exec_win is not None:
+            self._exec_win.stop_refresh()
 
 
 if __name__ == "__main__":

@@ -27,6 +27,9 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         super().__init__(parent)
         self.setupUi(self)
 
+        self._drag_active = False
+        self._drag_pos = None
+
         # ===== Video display init =====
         self.label.setScaledContents(True)
         self.label.setAlignment(Qt.AlignCenter)
@@ -47,6 +50,8 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.ros = None
         self.cmd_vel_pub = None
         self.image_topic = None
+        self.odom_topic = None
+        self.power_topic = None
         self._ros_ready = False
         self._ros_check_timer = None
         self._ros_thread = None
@@ -56,6 +61,13 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         # 当前速度状态
         self.current_linear_x = 0.0
         self.current_angular_z = 0.0
+
+        self._latest_speed_mps = 0.0
+        self._latest_voltage = 0.0
+
+        self._latest_qimg = None
+        self._latest_qimg_size = None
+        self._latest_image_msg = None
 
         # 10Hz 发布（等价 rostopic pub -r 10）
         self.cmd_timer = QTimer(self)
@@ -93,11 +105,31 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         # ===== mock 数据（原样保留）=====
         self._t = QTimer(self)
         self._t.timeout.connect(self._mock_update)
-        self._t.start(800)
+        # self._t.start(800)  # disabled: use real ROS status
 
-    # =========================================================
-    # ROS cmd_vel 控制
-    # =========================================================
+        # Video refresh timer: only draw latest frame at fixed rate
+        self._video_timer = QTimer(self)
+        self._video_timer.setInterval(100)   # ~15 FPS
+        self._video_timer.timeout.connect(self._refresh_video_frame)
+        self._video_timer.start()
+
+    def _refresh_control_ui(self):
+        try:
+            target_v = float(self.current_linear_x)
+
+            # 速度条：显示目标速度，立即响应
+            speed_value = int(min(200, abs(target_v) * 200))
+            if hasattr(self, "speedBarPlaceholder"):
+                self.speedBarPlaceholder.setValue(speed_value)
+
+            # 文本：同时显示目标速度 + 实际速度
+            if hasattr(self, "labelDriveInfo"):
+                self.labelDriveInfo.setText(
+                    f"目标速度: {target_v:.2f} m/s | 实际速度: {self._latest_speed_mps:.2f} m/s"
+                )
+        except Exception as e:
+            print("UI refresh error:", e)
+
     def _publish_cmd_vel(self):
         if not self._ros_ready or not self.cmd_vel_pub:
             return
@@ -116,6 +148,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.current_angular_z = 0.0
         if not self.cmd_timer.isActive():
             self.cmd_timer.start()
+        self._refresh_control_ui()
 
     def start_backward(self):
         if not self._require_ros():
@@ -124,6 +157,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.current_angular_z = 0.0
         if not self.cmd_timer.isActive():
             self.cmd_timer.start()
+        self._refresh_control_ui()
 
     # ===== 斜向（阿克曼=前进/后退 + 转向）=====
     def start_forward_left(self):
@@ -133,6 +167,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.current_angular_z = 0.6
         if not self.cmd_timer.isActive():
             self.cmd_timer.start()
+        self._refresh_control_ui()
 
     def start_forward_right(self):
         if not self._require_ros():
@@ -141,6 +176,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.current_angular_z = -0.6
         if not self.cmd_timer.isActive():
             self.cmd_timer.start()
+        self._refresh_control_ui()
 
     def start_backward_left(self):
         if not self._require_ros():
@@ -149,6 +185,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.current_angular_z = 0.6
         if not self.cmd_timer.isActive():
             self.cmd_timer.start()
+        self._refresh_control_ui()
 
     def start_backward_right(self):
         if not self._require_ros():
@@ -157,6 +194,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         self.current_angular_z = -0.6
         if not self.cmd_timer.isActive():
             self.cmd_timer.start()
+        self._refresh_control_ui()
 
     def stop_motion(self):
         if self.cmd_timer.isActive():
@@ -171,6 +209,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         }
         if self._ros_ready and self.cmd_vel_pub:
             self.cmd_vel_pub.publish(roslibpy.Message(msg))
+        self._refresh_control_ui()
 
     def _require_ros(self) -> bool:
         print(f"DEBUG: _require_ros check, _ros_ready={self._ros_ready}, cmd_vel_pub={self.cmd_vel_pub is not None}")
@@ -221,10 +260,34 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         )
         self.image_topic.subscribe(self._on_image_msg)
 
+        self.odom_topic = roslibpy.Topic(
+            self.ros,
+            "/odom",
+            "nav_msgs/Odometry"
+        )
+        self.odom_topic.subscribe(self._on_odom_msg)
+
+        self.power_topic = roslibpy.Topic(
+            self.ros,
+            "/PowerVoltage",
+            "std_msgs/Float32"
+        )
+        self.power_topic.subscribe(self._on_power_msg)
+
     def closeEvent(self, event):
         try:
             if self.image_topic:
                 self.image_topic.unsubscribe()
+        except Exception:
+            pass
+        try:
+            if self.odom_topic:
+                self.odom_topic.unsubscribe()
+        except Exception:
+            pass
+        try:
+            if self.power_topic:
+                self.power_topic.unsubscribe()
         except Exception:
             pass
         try:
@@ -455,11 +518,46 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
                 btn.setIcon(icon.icon(accent))
                 btn.setIconSize(icon_size)
 
-    # =========================================================
-    # Camera image callback (ROS → Qt)
-    # =========================================================
-    def _on_image_msg(self, msg):
+    def _on_odom_msg(self, msg):
         try:
+            vx = float(msg["twist"]["twist"]["linear"]["x"])
+            self._latest_speed_mps = vx
+
+            # 直接用 /odom 的实际速度驱动速度条
+            speed_value = int(min(200, abs(vx) * 200))
+            if hasattr(self, "speedBarPlaceholder"):
+                self.speedBarPlaceholder.setValue(speed_value)
+
+            if hasattr(self, "labelDriveInfo"):
+                self.labelDriveInfo.setText(f"实际速度: {vx:.2f} m/s")
+
+            if hasattr(self, "label_2"):
+                self.label_2.setText(f"位置地图    实际速度 {vx:.2f} m/s")
+        except Exception as e:
+            print("Odom error:", e)
+
+    def _on_power_msg(self, msg):
+        try:
+            voltage = float(msg["data"])
+            self._latest_voltage = voltage
+
+            # 24V system provisional mapping
+            percent = int(max(0, min(100, (voltage - 21.0) / (29.4 - 21.0) * 100)))
+
+            if hasattr(self, "batteryBarPlaceholder"):
+                self.batteryBarPlaceholder.setValue(percent)
+
+            if hasattr(self, "labelEStop"):
+                self.labelEStop.setText(f"电量: {voltage:.2f} V / {percent}%")
+        except Exception as e:
+            print("Power error:", e)
+
+    def _refresh_video_frame(self):
+        try:
+            msg = self._latest_image_msg
+            if msg is None:
+                return
+
             width = msg['width']
             height = msg['height']
             encoding = msg['encoding']
@@ -477,10 +575,39 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
                 height,
                 3 * width,
                 QImage.Format_RGB888
-            )
+            ).copy()
 
-            pix = QPixmap.fromImage(qimg)
-            self.label.setPixmap(pix)
-
+            self._latest_qimg = qimg
+            self._latest_qimg_size = (width, height)
+            self.label.setPixmap(QPixmap.fromImage(qimg))
         except Exception as e:
-            print("Camera error:", e)
+            print("Video refresh error:", e)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_active = True
+            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_active and event.buttons() & Qt.LeftButton and self._drag_pos is not None:
+            self.move(event.globalPos() - self._drag_pos)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_active = False
+            self._drag_pos = None
+            event.accept()
+        else:
+            super().mouseReleaseEvent(event)
+
+    def _on_image_msg(self, msg):
+        try:
+            self._latest_image_msg = msg
+        except Exception as e:
+            print("Camera cache error:", e)

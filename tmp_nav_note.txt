@@ -1,0 +1,592 @@
+
+
+===== PAGE 1 =====
+2D 导航（单点 / 多点）功能  
+1. 使用教程  
+1 ）打开终端输入启动  2D 导航功能的指令
+2 ）在上位机端打开  rviz 可视化工具，如下图在  rviz 中的  Add 按键中的  By topic 
+选项通过话题的形式添加可视化选项。
+添加完成后  rviz 显示画面如下图所示：
+roslaunch turn_on_wheeltec_robot navigation.launch
+rviz
+
+===== PAGE 2 =====
+导航模式有两种，一种是单点导航，点击  rviz 上的  2D Nav Goal 按键，然后在地图中选定导航点与方
+向，单击鼠标确定导航目标点位置，并且不要松开，继续拖动选择导航目标方向，确定后松手，小车就
+会运动到所指定的目标点，在运行  rviz 的终端也会显示目标点的坐标。
+
+===== PAGE 3 =====
+另一种是多点导航，点击  rviz 界面上方的  Publish Point 就可以设置用于多点导航的点了，当设置多个点
+时，小车会在这几个点之间往复运动，使用  Publish Point 工具进行多点导航时，所设置的导航点默认方
+向都是小车的初始车头方向。
+
+===== PAGE 4 =====
+2. 启动文件剖析  
+1 ）启动文件内容总览  
+<launch>
+ <!-- 开启机器人底层相关节点 同时开启导航功能-->
+ <include file="$(find 
+turn_on_wheeltec_robot)/launch/turn_on_wheeltec_robot.launch">
+    <arg name="navigation"  default="true"/>
+ </include>
+ <!-- 设置需要用于导航的地图  -->
+ <arg name="map_file" default="$(find 
+turn_on_wheeltec_robot)/map/WHEELTEC.yaml"/>
+ <node name="map_server_for_test" pkg="map_server" type="map_server" args="$(arg 
+map_file)">
+ </node>
+  <!-- turn on lidar 开启雷达  -->
+  <include file="$(find turn_on_wheeltec_robot)/launch/wheeltec_lidar.launch" />
+ <!-- 开启用于导航的自适应蒙特卡洛定位 amcl-->
+ <!-- 利用激光雷达 + 已知地图 + 里程计，实时估计机器人在地图中的位姿-->
+ <include file="$(find turn_on_wheeltec_robot)/launch/include/amcl.launch" />
+ <!-- MarkerArray 功能节点> -->
+
+===== PAGE 5 =====
+ 
+2 ）内容剖析  
+A. send_mark.py （多点导航的关键支撑模块）  
+该节点提供多点导航任务管理功能：接收  RViz/ 上位机添加的目标点，发布  MarkerArray 进行可视化，
+并按顺序将目标点发送给  move_base ；当到达或失败时根据反馈自动重试或切换到下一个点，支持循环
+巡航与外部停止 / 清空目标点。
+ <!-- 多目标点 / 巡航点的管理与发送节点 -->
+ <node name='send_mark' pkg="turn_on_wheeltec_robot" type="send_mark.py">
+ </node>
+  <!-- move_base 节点检测 -->
+ <node name='node_detection' pkg="turn_on_wheeltec_robot" type="node_ping.py">
+   <param name="node_name" type="string" value="/move_base"/>
+ </node>
+ 
+</launch>
+#!/usr/bin/env python
+# encoding: utf-8
+from visualization_msgs.msg import Marker
+from visualization_msgs.msg import MarkerArray
+import rospy
+import math
+from geometry_msgs.msg import PointStamped, PoseStamped
+from std_msgs.msg import Int8
+from std_msgs.msg import Bool
+import actionlib
+from move_base_msgs.msg import *
+import sys, select, termios, tty
+import time
+# 到达目标点成功或失败的回调函数，输入参数： [3 ：成功，  其它：失败 ](4 ： ABORTED)
+def pose_callback(msg):
+    global try_again, index, try_again, index
+    if msg.status.status >= 3 and count>0 :  # 成功到达任意目标点，前往下一目标点
+        try_again = 1 # 允许再次尝试前往尚未抵达的该目标点
+       
+        #count 表示当前目标点计数， index 表示已完成的目标点计数
+        if index == count:                   # 当 index 等于 count 时，表示所有目标点完成，
+重新开始巡航
+            print ('Reach the target point '+str(index-1)+':')
+            print('x:'+str(markerArray.markers[index-1].pose.position.x)+
+                ', y:'+str(markerArray.markers[index-1].pose.position.y)+
+                ', z:'+str(markerArray.markers[index-1].pose.orientation.z)+
+                ', w:'+str(markerArray.markers[index-1].pose.orientation.w))   
+            if count>1: print('Complete instructions!') # 只有一个目标点不算巡航
+            index = 0;
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+
+===== PAGE 6 =====
+            pose.header.stamp = rospy.Time.now()
+            pose.pose.position.x = markerArray.markers[index].pose.position.x
+            pose.pose.position.y = markerArray.markers[index].pose.position.y
+            pose.pose.orientation.z = 
+markerArray.markers[index].pose.orientation.z
+            pose.pose.orientation.w = 
+markerArray.markers[index].pose.orientation.w
+            goal_pub.publish(pose)
+            index += 1 # 下一次要发布的目标点序号
+        elif index < count:                   # 当 index 小于 count 时，表示还未完成所有目
+标点，目标巡航未完成
+            print ('Reach the target point '+str(index-1)+':')    
+            print('x:'+str(markerArray.markers[index-1].pose.position.x)+
+                ', y:'+str(markerArray.markers[index-1].pose.position.y)+
+                ', z:'+str(markerArray.markers[index-1].pose.orientation.z)+
+                ', w:'+str(markerArray.markers[index-1].pose.orientation.w)) 
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = rospy.Time.now()
+            pose.pose.position.x = markerArray.markers[index].pose.position.x
+            pose.pose.position.y = markerArray.markers[index].pose.position.y
+            pose.pose.orientation.z = 
+markerArray.markers[index].pose.orientation.z
+            pose.pose.orientation.w = 
+markerArray.markers[index].pose.orientation.w
+            goal_pub.publish(pose)
+            index += 1 # 下一次要发布的目标点序号
+        
+    elif count>0: # 未抵达设定的目标点     
+        rospy.logwarn('Can not reach the target point '+str(index-1)+':'+'\r\n'+
+                      'x:'+str(markerArray.markers[index-1].pose.position.x)+
+                    ', y:'+str(markerArray.markers[index-1].pose.position.y)+
+                    ', z:'+str(markerArray.markers[index-1].pose.orientation.z)+
+                    ', w:'+str(markerArray.markers[index-1].pose.orientation.w)) 
+        # 如果未尝试过前往尚未抵达的目标点，则尝试前往尚未抵达的目标点
+        if try_again == 1:
+            rospy.logwarn('trying reach the target point '+str(index-1)+' 
+again!'+'\r\n'+
+                          'x:'+str(markerArray.markers[index-1].pose.position.x)+
+                        ', y:'+str(markerArray.markers[index-1].pose.position.y)+
+                        ', z:'+str(markerArray.markers[index-
+1].pose.orientation.z)+
+                        ', w:'+str(markerArray.markers[index-
+1].pose.orientation.w)) 
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = rospy.Time.now()
+            pose.pose.position.x = markerArray.markers[index - 1].pose.position.x 
+          
+            pose.pose.position.y = markerArray.markers[index - 1].pose.position.y
+            pose.pose.orientation.z = markerArray.markers[index-
+1].pose.orientation.z
+
+===== PAGE 7 =====
+            pose.pose.orientation.w = markerArray.markers[index-
+1].pose.orientation.w
+            goal_pub.publish(pose)
+            try_again = 0 # 不允许再次尝试前往尚未抵达的该目标点
+        # 如果已经尝试过前往尚未抵达的目标点，则前往下一个目标点
+        elif index < len(markerArray.markers):      # 若还未完成目标点
+            rospy.logwarn('try reach the target point '+str(index-1)+' failed! 
+reach next point:'+'\r\n'+
+                          'x:'+str(markerArray.markers[index-1].pose.position.x)+
+                        ', y:'+str(markerArray.markers[index-1].pose.position.y)+
+                        ', z:'+str(markerArray.markers[index-
+1].pose.orientation.z)+
+                        ', w:'+str(markerArray.markers[index-
+1].pose.orientation.w)) 
+            if index==count: index=0 # 如果下一个目标点序号为 count ，说明当前目标点为最后一
+个目标点，下一个目标点序号应该设置为 0
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = rospy.Time.now()
+            pose.pose.position.x = markerArray.markers[index].pose.position.x     
+ 
+            pose.pose.position.y = markerArray.markers[index].pose.position.y
+            pose.pose.orientation.z = 
+markerArray.markers[index].pose.orientation.z
+            pose.pose.orientation.w = 
+markerArray.markers[index].pose.orientation.w
+            goal_pub.publish(pose)
+            index += 1 # 下一次要发布的目标点序号
+            try_again = 1 # 允许再次尝试前往尚未抵达的该目标点
+#rviz 内 NavGoal 标记按下的回调函数，输入参数：按下的位置 [x, y, z=0]
+def navGoal_callback(msg):           
+    global index, count
+    print('Add a new target point '+str(count)+':')
+    print('x:'+str(msg.pose.position.x)+
+        ', y:'+str(msg.pose.position.y)+
+        ', z:'+str(msg.pose.orientation.z)+
+        ', w:'+str(msg.pose.orientation.w)) 
+    marker = Marker()      # 创建 marker 对象
+    marker.header.frame_id = 'map' # 以哪一个 TF 坐标为原点
+    marker.type = marker.ARROW#TEXT_VIEW_FACING # 一直面向屏幕的字符格式
+    marker.action = marker.ADD # 添加 marker
+    marker.scale.x = 0.5 #marker 大小
+    marker.scale.y = 0.05 #marker 大小
+    marker.scale.z = 0.05 #marker 大小，对于字符只有 z 起作用
+    marker.color.a = 1 # 字符透明度
+    marker.color.r = 1 # 字符颜色 R( 红色 ) 通道
+    marker.color.g = 0 # 字符颜色 G( 绿色 ) 通道
+    marker.color.b = 0 # 字符颜色 B( 蓝色 ) 通道
+    marker.pose.position.x = msg.pose.position.x # 字符位置
+    marker.pose.position.y = msg.pose.position.y # 字符位置
+    marker.pose.position.z = 0.1#msg.position.z # 字符位置
+
+===== PAGE 8 =====
+    marker.pose.orientation.z = msg.pose.orientation.z # 字符位置
+    marker.pose.orientation.w = msg.pose.orientation.w # 字符位置
+    markerArray.markers.append(marker) # 添加元素进数组
+    marker_number = Marker()      # 创建 marker 对象
+    marker_number.header.frame_id = 'map' # 以哪一个 TF 坐标为原点
+    marker_number.type = marker_number.TEXT_VIEW_FACING # 一直面向屏幕的字符格式
+    marker_number.action = marker_number.ADD # 添加 marker
+    marker_number.scale.x = 0.5 #marker 大小
+    marker_number.scale.y = 0.5 #marker 大小
+    marker_number.scale.z = 0.5 #marker 大小，对于字符只有 z 起作用
+    marker_number.color.a = 1 # 字符透明度
+    marker_number.color.r = 1 # 字符颜色 R( 红色 ) 通道
+    marker_number.color.g = 0 # 字符颜色 G( 绿色 ) 通道
+    marker_number.color.b = 0 # 字符颜色 B( 蓝色 ) 通道
+    marker_number.pose.position.x = msg.pose.position.x # 字符位置
+    marker_number.pose.position.y = msg.pose.position.y # 字符位置
+    marker_number.pose.position.z = 0.1#msg.position.z # 字符位置
+    marker_number.pose.orientation.z = msg.pose.orientation.z # 字符位置
+    marker_number.pose.orientation.w = msg.pose.orientation.w # 字符位置
+    marker_number.text = str(count) # 字符内容
+    markerArray_number.markers.append(marker_number) # 添加元素进数组
+    #markers 的 id 不能一样，否则 rviz 只会识别最后一个元素
+    id = 0
+    for m in markerArray.markers:    # 遍历 marker 分别给 id 赋值
+        m.id = id
+        id += 1
+    for m in markerArray_number.markers:    # 遍历 marker 分别给 id 赋值
+        m.id = id
+        id += 1
+    mark_pub.publish(markerArray) # 发布 markerArray ， rviz 订阅并进行可视化
+    mark_pub.publish(markerArray_number) # 发布 markerArray ， rviz 订阅并进行可视化
+    # 第一次添加 marker 时直接发布目标点
+    if count == 0:
+        pose = PoseStamped() # 创建目标点对象
+        pose.header.frame_id = 'map' # 以哪一个 TF 坐标为原点
+        pose.header.stamp = rospy.Time.now()
+        pose.pose.position.x = msg.pose.position.x # 目标点位置
+        pose.pose.position.y = msg.pose.position.y # 目标点位置
+        pose.pose.orientation.z = marker.pose.orientation.z
+        pose.pose.orientation.w = marker.pose.orientation.w
+        goal_pub.publish(pose)
+        index += 1 # 下一次要发布的目标点序号
+    count += 1 # 有几个目标点
+#rviz 内标记按下的回调函数，输入参数：按下的位置 [x, y, z=0]
+def click_callback(msg):           
+    global index, count
+    print('Add a new target point '+str(count)+':')
+    print('x:'+str(msg.point.x)+
+
+===== PAGE 9 =====
+        ', y:'+str(msg.point.y)+
+        ', z:0'+', w:1') 
+    marker = Marker()      # 创建 marker 对象
+    marker.header.frame_id = 'map' # 以哪一个 TF 坐标为原点
+    marker.type = marker.ARROW # 一直面向屏幕的字符格式
+    marker.action = marker.ADD # 添加 marker
+    marker.scale.x = 0.2 #marker 大小
+    marker.scale.y = 0.05 #marker 大小
+    marker.scale.z = 0.05 #marker 大小，对于字符只有 z 起作用
+    marker.color.a = 1 # 字符透明度
+    marker.color.r = 1 # 字符颜色 R( 红色 ) 通道
+    marker.color.g = 0 # 字符颜色 G( 绿色 ) 通道
+    marker.color.b = 0 # 字符颜色 B( 蓝色 ) 通道
+    marker.pose.position.x = msg.point.x # 字符位置
+    marker.pose.position.y = msg.point.y # 字符位置
+    marker.pose.orientation.z = 0 # 字符位置
+    marker.pose.orientation.w = 1 # 字符位置
+    markerArray.markers.append(marker) # 添加元素进数组
+    marker_number = Marker()      # 创建 marker 对象
+    marker_number.header.frame_id = 'map' # 以哪一个 TF 坐标为原点
+    marker_number.type = marker_number.TEXT_VIEW_FACING # 一直面向屏幕的字符格式
+    marker_number.action = marker_number.ADD # 添加 marker
+    marker_number.scale.x = 0.5 #marker 大小
+    marker_number.scale.y = 0.5 #marker 大小
+    marker_number.scale.z = 0.5 #marker 大小，对于字符只有 z 起作用
+    marker_number.color.a = 1 # 字符透明度
+    marker_number.color.r = 1 # 字符颜色 R( 红色 ) 通道
+    marker_number.color.g = 0 # 字符颜色 G( 绿色 ) 通道
+    marker_number.color.b = 0 # 字符颜色 B( 蓝色 ) 通道
+    marker_number.pose.position.x = msg.point.x # 字符位置
+    marker_number.pose.position.y = msg.point.y # 字符位置
+    marker_number.pose.position.z = 0.1 # 字符位置
+    marker_number.pose.orientation.z = 0 # 字符位置
+    marker_number.pose.orientation.w = 1 # 字符位置
+    marker_number.text = str(count) # 字符内容
+    markerArray_number.markers.append(marker_number) # 添加元素进数组
+    #markers 的 id 不能一样，否则 rviz 只会识别最后一个元素
+    id = 0
+    for m in markerArray.markers:    # 遍历 marker 分别给 id 赋值
+        m.id = id
+        id += 1
+    for m in markerArray_number.markers:    # 遍历 marker 分别给 id 赋值
+        m.id = id
+        id += 1
+    
+    mark_pub.publish(markerArray) # 发布 markerArray ， rviz 订阅并进行可视化
+    mark_pub.publish(markerArray_number) # 发布 markerArray ， rviz 订阅并进行可视化
+    # 第一次添加 marker 时直接发布目标点
+    if count == 0:
+        pose = PoseStamped() # 创建目标点对象
+        pose.header.frame_id = 'map' # 以哪一个 TF 坐标为原点
+
+===== PAGE 10 =====
+        pose.header.stamp = rospy.Time.now()
+        pose.pose.position.x = msg.point.x # 目标点位置
+        pose.pose.position.y = msg.point.y # 目标点位置
+        pose.pose.orientation.z = 0 # 四元数，到达目标点后小车的方向， z=sin(angle/2)
+        pose.pose.orientation.w = 1 # 四元数，到达目标点后小车的方向， w=cos(angle/2)
+        goal_pub.publish(pose)
+        index += 1 # 下一次要发布的目标点序号
+    count += 1 # 有几个目标点
+# 结束多点导航
+def over_nav_callback(msg):
+    global markerArray, markerArray_number, count, index, try_again, mark_pub
+    if msg.data==True:
+        count = 0
+        index = 0
+        try_again = 1
+        markerArray = MarkerArray() 
+        marker = Marker()
+        marker.header.frame_id = 'map' 
+        marker.type = marker.TEXT_VIEW_FACING 
+        marker.action = marker.DELETEALL 
+        marker.text = '' 
+        markerArray.markers.append(marker) 
+        for m in markerArray_number.markers:    
+            m.action = marker.DELETEALL
+        mark_pub.publish(markerArray) 
+        mark_pub.publish(markerArray_number) 
+        markerArray = MarkerArray() 
+        markerArray_number = MarkerArray() 
+# 获取键值函数
+def getKey():
+    fd = sys.stdin.fileno()
+    new_settings = termios.tcgetattr(fd)
+    new_settings[3]=new_settings[3] | termios.ECHO
+    try:
+        # termios.tcsetattr(fd, termios.TCSADRAIN, new_settings)
+        # tty.setraw(sys.stdin.fileno())
+        tty.setcbreak(sys.stdin.fileno())
+        key = sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, new_settings)
+    return key
+def send_mark():
+    global markerArray, markerArray_number, count, index, try_again, mark_pub, 
+goal_pub 
+    markerArray = MarkerArray() # 目标点标记数组
+    markerArray_number = MarkerArray() # 目标点标记数组
+    count = 0
+    index = 0
+    try_again = 1
+
+===== PAGE 11 =====
+    sendflagPublisher = rospy.Publisher('/send_flag', Int8, queue_size =1)
+    rospy.init_node('path_point_demo') # 初始化节点
+    mark_pub    = rospy.Publisher('/path_point', MarkerArray, queue_size = 100) #
+用于发布目标点标记
+    navGoal_sub = rospy.Subscriber('/send_mark_goal', PoseStamped, 
+navGoal_callback) # 订阅 rviz 内标记按下的位置
+    click_sub   = rospy.Subscriber('/clicked_point', PointStamped, 
+click_callback) # 订阅 rviz 内标记按下的位置
+    goal_pub    = rospy.Publisher('/move_base_simple/goal', PoseStamped, 
+queue_size = 1) # 用于发布目标点
+    over_nav_sub= rospy.Subscriber('nav_over',Bool,over_nav_callback)
+    send_flag=Int8()
+    send_flag.data=1
+    sendflagPublisher.publish(send_flag)
+    rospy.sleep(1.)
+    sendflagPublisher.publish(send_flag)
+    rospy.loginfo('a=%d',send_flag.data)
+    print("11111111111111111111111111")
+    goal_status_sub = rospy.Subscriber('/move_base/result', MoveBaseActionResult, 
+pose_callback) # 用于订阅是否到达目标点状态
+    while not rospy.is_shutdown():
+        key = getKey() # 获取键值
+        if key=='c': # 键值为 c 是清空目标点
+            count = 0
+            index = 0
+            try_again = 1
+            markerArray = MarkerArray() 
+            marker = Marker()
+            marker.header.frame_id = 'map' 
+            marker.type = marker.TEXT_VIEW_FACING 
+            marker.action = marker.DELETEALL 
+            marker.text = '' 
+            markerArray.markers.append(marker) 
+            for m in markerArray_number.markers:    
+                m.action = marker.DELETEALL
+            mark_pub.publish(markerArray) 
+            mark_pub.publish(markerArray_number) 
+            markerArray = MarkerArray() 
+            markerArray_number = MarkerArray() 
+        elif (key == '\x03'): #ctrl+c 退出
+            break
+def breakkey():
+    fd = sys.stdin.fileno()
+    new_settings = termios.tcgetattr(fd)
+    new_settings[3]=new_settings[3] | termios.ECHO
+    termios.tcsetattr(fd, termios.TCSADRAIN, new_settings)
+if __name__ == '__main__':
+    settings = termios.tcgetattr(sys.stdin) # 获取键值初始化
+    rospy.on_shutdown(breakkey)# 退出前执行键值初始化
+
+===== PAGE 12 =====
+ 
+B. node_ping.py （ move_base 运行状态检测）  
+该脚本持续监测指定  ROS 关键节点（如  /move_base）的在线状态，一旦运行中掉线便立即向  
+/cmd_vel 发布零速度指令以强制停车并报警，保障导航运行安全。
+    send_mark()
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import os
+import time
+import rospy
+import rosnode
+import rosgraph
+import rosgraph.names
+import errno
+import socket 
+from geometry_msgs.msg import Twist, Vector3
+try:
+    from xmlrpc.client import ServerProxy
+except ImportError:
+    from xmlrpclib import ServerProxy
+try: 
+    import urllib.parse as urlparse
+except ImportError:
+    import urlparse
+"""
+This sample integrated source code.
+If you want a simple way to ping rosnode.
+rosnode.rosnode_ping('/node_name', max_count=1)
+max_count : Number of pings
+"""
+class ROSNodeException(Exception):
+    """
+    rosnode base exception type
+    """
+    pass
+class ROSNodeIOException(ROSNodeException):
+    """
+    Exceptions for communication-related (i/o) errors, generally due to Master or 
+Node network communication issues.
+    """
+    pass
+class Node_Detecion:
+    def __init__(self):
+        self.node_name = rospy.get_param('~node_name')
+        #self.check_frequency = rospy.get_param('~frequency')
+        self.cmdVelPublisher = rospy.Publisher('/cmd_vel', Twist, queue_size =3)
+
+===== PAGE 13 =====
+        self._caller_apis = {}
+        self.find = None
+    def stopMoving(self):
+        velocity = Twist()
+        velocity.linear = Vector3(0.,0.,0.)
+        velocity.angular= Vector3(0.,0.,0.)
+        self.cmdVelPublisher.publish(velocity)
+    def _succeed(self,args):
+        code, msg, val = args
+        if code != 1:
+            raise ROSNodeException("remote call failed: %s"%msg)
+        return val
+    def get_api_uri(self, master, caller_id, skip_cache=False):
+        """
+        @param master: rosgraph Master instance
+        @type  master: rosgraph.Master
+        @param caller_id: node name
+        @type  caller_id: str
+        @param skip_cache: flag to skip cached data and force to lookup node from 
+master
+        @type  skip_cache: bool
+        @return: xmlrpc URI of caller_id
+        @rtype: str
+        @raise ROSNodeIOException: if unable to communicate with master
+        """
+        caller_api = self._caller_apis.get(caller_id, None)
+        if not caller_api or skip_cache:
+            try:
+                caller_api = master.lookupNode(caller_id)
+                self._caller_apis[caller_id] = caller_api
+            except rosgraph.MasterError:
+                return None
+            except socket.error:
+                raise ROSNodeIOException("Unable to communicate with master!")
+        return caller_api
+    def rosnode_ping(self, node_name, max_count=None, 
+details=False,skip_cache=False):
+        """
+        Test connectivity to node by calling its XMLRPC API
+        @param node_name: name of node to ping
+        @type  node_name: str
+        @param max_count: number of ping requests to make
+        @type  max_count: int
+        @param details: print ping information to screen
+        @type  details: bool
+        @return: True if node pinged
+        @rtype: bool
+        @raise ROSNodeIOException: if unable to communicate with master
+        """
+        ID = '/rosnode'
+        master = rosgraph.Master(ID)
+        node_api = self.get_api_uri(master,node_name)
+
+===== PAGE 14 =====
+        if not node_api:
+            print("cannot ping [%s] "%node_name)
+            return False
+        timeout = 3.
+        if details:
+            print("pinging %s with a timeout of %ss"%(node_name, timeout))
+        socket.setdefaulttimeout(timeout)
+        node = ServerProxy(node_api)
+        lastcall = 0.
+        count = 0
+        acc = 0.
+        try:
+            while True:
+                try:
+                    start = time.time()
+                    pid = self._succeed(node.getPid(ID))
+                    end = time.time()
+                    self.find = 1
+                    dur = (end-start)*1000.
+                    acc += dur
+                    count += 1
+                    if details:
+                        print("xmlrpc reply from %s\ttime=%fms"%(node_api, dur))
+                    # 1s between pings
+                except socket.error as e:
+                    # 3786: catch ValueError on unpack as socket.error is not 
+always a tuple
+                    try:
+                        # #3659
+                        errnum, msg = e.args
+                        if errnum == -2: #name/service unknown
+                            p = urlparse.urlparse(node_api)
+                            print("ERROR: Unknown host [%s] for node [%s]"%
+(p.hostname, node_name))
+                        elif errnum == errno.ECONNREFUSED:
+                            # check if node url has changed
+                            new_node_api = self.get_api_uri(master,node_name, 
+skip_cache=True)
+                            if not new_node_api:
+                                print("cannot ping [%s]: unknown node"%node_name)
+                                return False
+                            if new_node_api != node_api:
+                                if details:
+                                    print("node url has changed from [%s] to 
+[%s], retrying to ping"%(node_api, new_node_api))
+                                node_api = new_node_api
+                                node = ServerProxy(node_api)
+                                continue
+                            print("ERROR: connection refused to [%s]"%(node_api))
+                        else:
+                            print("connection to [%s] timed out"%node_name)
+                        return False
+
+===== PAGE 15 =====
+ 
+ 
+                    except ValueError:
+                        print("unknown network error contacting node: %s"%
+(str(e)))
+                if max_count and count >= max_count:
+                    break
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            pass
+                
+        if details and count > 1:
+            print("ping average: %fms"%(acc/count))
+        return True
+    def feedback(self):
+        while not rospy.is_shutdown():
+            ping = check_.rosnode_ping(self.node_name, 
+max_count=3,details=False)#max_count 为允许 ping 通次数
+            if not ping and self.find != None:
+                self.find = None
+                for i in range(3):
+                    self.stopMoving() # 防止速度置零信息丢失发布 3 次
+                rospy.logwarn('Node Connection Failed!')
+            time.sleep(1.0)
+if __name__ == '__main__':
+    rospy.init_node("check_node")
+    check_ = Node_Detecion()
+    check_.feedback()
+    rospy.spin()
+
+===== PAGE 16 =====

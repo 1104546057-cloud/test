@@ -7,11 +7,97 @@
     <x>0</x>
     <y>0</y>
     <width>1083</width>
-    <height>704</height>
+    <height>755</height>
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Form</string>
+   <string>Jetson 状态监控框架</string>
+  </property>
+  <property name="styleSheet">
+   <string notr="true">QWidget#Form{
+    background:qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:1,
+    stop:0 rgba(32,47,73,255),
+    stop:1 rgba(20,31,48,255));
+    color: rgb(235,240,248);
+    font-family: &quot;Microsoft YaHei&quot;;
+}
+
+QFrame{
+    background: rgba(255,255,255,22);
+    border: 1px solid rgba(255,255,255,28);
+    border-radius: 18px;
+}
+
+QLabel{
+    color: rgb(233,240,248);
+    background: transparent;
+    border: none;
+}
+
+QLabel[class=&quot;cardTitle&quot;]{
+    font-size: 18px;
+    font-weight: 700;
+    color: rgb(245,248,252);
+}
+
+QLabel[class=&quot;sectionTitle&quot;]{
+    font-size: 14px;
+    font-weight: 700;
+    color: rgb(236,242,248);
+}
+
+QLabel[class=&quot;keyText&quot;]{
+    font-size: 12px;
+    color: rgba(220,228,238,180);
+}
+
+QLabel[class=&quot;valueBig&quot;]{
+    font-size: 26px;
+    font-weight: 700;
+    color: rgb(255,255,255);
+}
+
+QLabel[class=&quot;valueText&quot;]{
+    font-size: 13px;
+    font-weight: 600;
+    color: rgb(245,248,252);
+}
+
+QLabel[class=&quot;mutedText&quot;]{
+    font-size: 12px;
+    color: rgba(220,228,238,150);
+}
+
+QProgressBar{
+    min-height: 10px;
+    max-height: 10px;
+    border: none;
+    border-radius: 5px;
+    background: rgba(255,255,255,35);
+    text-align: center;
+}
+
+QProgressBar::chunk{
+    border-radius: 5px;
+    background: qlineargradient(spread:pad, x1:0, y1:0, x2:1, y2:0,
+    stop:0 rgba(77,184,255,255),
+    stop:1 rgba(105,223,182,255));
+}
+
+QToolButton{
+    min-width: 40px;
+    min-height: 40px;
+    color: white;
+    font-size: 18px;
+    font-weight: 700;
+    background: rgba(255,255,255,26);
+    border: 1px solid rgba(255,255,255,30);
+    border-radius: 12px;
+}
+
+QToolButton:hover{
+    background: rgba(255,255,255,42);
+}</string>
   </property>
   <layout class="QGridLayout" name="gridMain" rowstretch="3,2" columnstretch="1">
    <property name="leftMargin">
@@ -48,15 +134,9 @@
      </property>
      <item row="0" column="0">
       <widget class="QFrame" name="frameStatus">
-       <property name="frameShape">
-        <enum>QFrame::StyledPanel</enum>
-       </property>
-       <property name="frameShadow">
-        <enum>QFrame::Raised</enum>
-       </property>
        <layout class="QVBoxLayout" name="layoutStatus">
         <property name="spacing">
-         <number>12</number>
+         <number>14</number>
         </property>
         <property name="leftMargin">
          <number>16</number>
@@ -73,62 +153,250 @@
         <item>
          <widget class="QLabel" name="labelStatusTitle">
           <property name="text">
-           <string>状态记录</string>
+           <string>状态摘要</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+          <property name="property" stdset="0">
+           <string notr="true">cardTitle</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QWidget" name="statusPlaceholder" native="true">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
-          </property>
-          <property name="styleSheet">
-           <string notr="true">background: rgba(255,255,255,40); border-radius: 16px;</string>
-          </property>
-          <layout class="QVBoxLayout" name="layoutStatusPlaceholder">
+         <widget class="QFrame" name="frameQuickCpu">
+          <layout class="QVBoxLayout" name="layoutQuickCpu">
+           <property name="spacing">
+            <number>6</number>
+           </property>
            <property name="leftMargin">
             <number>12</number>
            </property>
            <property name="topMargin">
-            <number>12</number>
+            <number>10</number>
            </property>
            <property name="rightMargin">
             <number>12</number>
            </property>
            <property name="bottomMargin">
-            <number>12</number>
+            <number>10</number>
            </property>
            <item>
-            <widget class="QLabel" name="labelStatusPlaceholder">
+            <widget class="QLabel" name="labelQuickCpuTitle">
              <property name="text">
-              <string>列表/日志占位</string>
+              <string>CPU 负载</string>
              </property>
-             <property name="alignment">
-              <set>Qt::AlignCenter</set>
+             <property name="property" stdset="0">
+              <string notr="true">keyText</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelCpuUsageValue">
+             <property name="text">
+              <string>18%</string>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">valueBig</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QProgressBar" name="progressCpuUsage">
+             <property name="value">
+              <number>18</number>
+             </property>
+             <property name="textVisible">
+              <bool>false</bool>
              </property>
             </widget>
            </item>
           </layout>
          </widget>
         </item>
+        <item>
+         <widget class="QFrame" name="frameQuickGpu">
+          <layout class="QVBoxLayout" name="layoutQuickGpu">
+           <property name="spacing">
+            <number>6</number>
+           </property>
+           <property name="leftMargin">
+            <number>12</number>
+           </property>
+           <property name="topMargin">
+            <number>10</number>
+           </property>
+           <property name="rightMargin">
+            <number>12</number>
+           </property>
+           <property name="bottomMargin">
+            <number>10</number>
+           </property>
+           <item>
+            <widget class="QLabel" name="labelQuickGpuTitle">
+             <property name="text">
+              <string>GPU 负载</string>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">keyText</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QLabel" name="labelGpuUsageValue">
+             <property name="text">
+              <string>42%</string>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">valueBig</string>
+             </property>
+            </widget>
+           </item>
+           <item>
+            <widget class="QProgressBar" name="progressGpuUsage">
+             <property name="value">
+              <number>42</number>
+             </property>
+             <property name="textVisible">
+              <bool>false</bool>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <widget class="QFrame" name="frameQuickTemp">
+          <layout class="QGridLayout" name="gridQuickTemp">
+           <property name="leftMargin">
+            <number>12</number>
+           </property>
+           <property name="topMargin">
+            <number>10</number>
+           </property>
+           <property name="rightMargin">
+            <number>12</number>
+           </property>
+           <property name="bottomMargin">
+            <number>10</number>
+           </property>
+           <property name="horizontalSpacing">
+            <number>8</number>
+           </property>
+           <property name="verticalSpacing">
+            <number>6</number>
+           </property>
+           <item row="0" column="0">
+            <widget class="QLabel" name="labelCpuTempKey">
+             <property name="text">
+              <string>CPU 温度</string>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">keyText</string>
+             </property>
+            </widget>
+           </item>
+           <item row="0" column="1">
+            <widget class="QLabel" name="labelCpuTempValue">
+             <property name="text">
+              <string>48.6 ℃</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">valueText</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QLabel" name="labelGpuTempKey">
+             <property name="text">
+              <string>GPU 温度</string>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">keyText</string>
+             </property>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QLabel" name="labelGpuTempValue">
+             <property name="text">
+              <string>44.2 ℃</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">valueText</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="0">
+            <widget class="QLabel" name="labelFanRpmKey">
+             <property name="text">
+              <string>风扇 RPM</string>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">keyText</string>
+             </property>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QLabel" name="labelFanRpmValue">
+             <property name="text">
+              <string>6020</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">valueText</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="0">
+            <widget class="QLabel" name="labelTotalPowerKey">
+             <property name="text">
+              <string>总功耗</string>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">keyText</string>
+             </property>
+            </widget>
+           </item>
+           <item row="3" column="1">
+            <widget class="QLabel" name="labelTotalPowerValue">
+             <property name="text">
+              <string>7.88 W</string>
+             </property>
+             <property name="alignment">
+              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+             </property>
+             <property name="property" stdset="0">
+              <string notr="true">valueText</string>
+             </property>
+            </widget>
+           </item>
+          </layout>
+         </widget>
+        </item>
+        <item>
+         <spacer name="spacerStatusBottom">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
        </layout>
       </widget>
      </item>
      <item row="0" column="1">
-      <widget class="QFrame" name="frameSpeedChart">
-       <property name="frameShape">
-        <enum>QFrame::StyledPanel</enum>
-       </property>
-       <property name="frameShadow">
-        <enum>QFrame::Raised</enum>
-       </property>
-       <layout class="QVBoxLayout" name="layoutSpeedChart">
+      <widget class="QFrame" name="frameSystemInfo">
+       <layout class="QVBoxLayout" name="layoutSystemInfo">
         <property name="spacing">
          <number>12</number>
         </property>
@@ -145,57 +413,217 @@
          <number>16</number>
         </property>
         <item>
-         <widget class="QLabel" name="labelSpeedTitle">
+         <widget class="QLabel" name="labelSystemInfoTitle">
           <property name="text">
-           <string>行驶速度</string>
+           <string>系统信息 / 设备信息</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+          <property name="property" stdset="0">
+           <string notr="true">cardTitle</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QWidget" name="speedChartPlaceholder" native="true">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
+         <layout class="QGridLayout" name="gridSystemInfo">
+          <property name="horizontalSpacing">
+           <number>16</number>
           </property>
-          <property name="minimumSize">
+          <property name="verticalSpacing">
+           <number>12</number>
+          </property>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelModelKey">
+            <property name="text">
+             <string>设备型号</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLabel" name="labelModelValue">
+            <property name="text">
+             <string>NVIDIA Orin NX Developer Kit</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelModuleKey">
+            <property name="text">
+             <string>模块规格</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLabel" name="labelModuleValue">
+            <property name="text">
+             <string>Jetson Orin NX (8GB)</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelJetpackKey">
+            <property name="text">
+             <string>JetPack</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLabel" name="labelJetpackValue">
+            <property name="text">
+             <string>5.1.4</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelL4TKey">
+            <property name="text">
+             <string>L4T</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QLabel" name="labelL4TValue">
+            <property name="text">
+             <string>35.6.0</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="0">
+           <widget class="QLabel" name="labelDistributionKey">
+            <property name="text">
+             <string>系统版本</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="1">
+           <widget class="QLabel" name="labelDistributionValue">
+            <property name="text">
+             <string>Ubuntu 20.04 focal</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="0">
+           <widget class="QLabel" name="labelPythonKey">
+            <property name="text">
+             <string>Python</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="1">
+           <widget class="QLabel" name="labelPythonValue">
+            <property name="text">
+             <string>3.8.x</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="0">
+           <widget class="QLabel" name="labelCudaKey">
+            <property name="text">
+             <string>CUDA</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="1">
+           <widget class="QLabel" name="labelCudaValue">
+            <property name="text">
+             <string>11.x</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="0">
+           <widget class="QLabel" name="labelTensorRtKey">
+            <property name="text">
+             <string>TensorRT</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="1">
+           <widget class="QLabel" name="labelTensorRtValue">
+            <property name="text">
+             <string>8.x</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="8" column="0">
+           <widget class="QLabel" name="labelHostNameKey">
+            <property name="text">
+             <string>主机名</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="8" column="1">
+           <widget class="QLabel" name="labelHostNameValue">
+            <property name="text">
+             <string>wheeltec</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <spacer name="spacerSystemInfoBottom">
+          <property name="orientation">
+           <enum>Qt::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
            <size>
-            <width>0</width>
-            <height>250</height>
+            <width>20</width>
+            <height>40</height>
            </size>
           </property>
-          <property name="styleSheet">
-           <string notr="true">background: rgba(255,255,255,40); border-radius: 18px;</string>
-          </property>
-          <layout class="QVBoxLayout" name="layoutSpeedPlaceholder">
-           <property name="leftMargin">
-            <number>12</number>
-           </property>
-           <property name="topMargin">
-            <number>12</number>
-           </property>
-           <property name="rightMargin">
-            <number>12</number>
-           </property>
-           <property name="bottomMargin">
-            <number>12</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="labelSpeedPlaceholder">
-             <property name="text">
-              <string>图表占位（后续换成折线图/柱状图）</string>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignCenter</set>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
+         </spacer>
         </item>
        </layout>
       </widget>
@@ -218,87 +646,7 @@
         <number>0</number>
        </property>
        <item>
-        <widget class="QFrame" name="frameRealtimePos">
-         <property name="frameShape">
-          <enum>QFrame::StyledPanel</enum>
-         </property>
-         <property name="frameShadow">
-          <enum>QFrame::Raised</enum>
-         </property>
-         <layout class="QVBoxLayout" name="layoutRealtimePos">
-          <property name="spacing">
-           <number>12</number>
-          </property>
-          <property name="leftMargin">
-           <number>16</number>
-          </property>
-          <property name="topMargin">
-           <number>16</number>
-          </property>
-          <property name="rightMargin">
-           <number>16</number>
-          </property>
-          <property name="bottomMargin">
-           <number>16</number>
-          </property>
-          <item>
-           <widget class="QLabel" name="labelRealtimePosTitle">
-            <property name="text">
-             <string>实时位置</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QWidget" name="realtimePosPlaceholder" native="true">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">background: rgba(255,255,255,40); border-radius: 16px;</string>
-            </property>
-            <layout class="QVBoxLayout" name="layoutRealtimePosPlaceholder">
-             <property name="leftMargin">
-              <number>12</number>
-             </property>
-             <property name="topMargin">
-              <number>12</number>
-             </property>
-             <property name="rightMargin">
-              <number>12</number>
-             </property>
-             <property name="bottomMargin">
-              <number>12</number>
-             </property>
-             <item>
-              <widget class="QLabel" name="labelRealtimePosPlaceholder">
-               <property name="text">
-                <string>地图/位置内容占位</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-            </layout>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
         <widget class="QFrame" name="frameCompute">
-         <property name="frameShape">
-          <enum>QFrame::StyledPanel</enum>
-         </property>
-         <property name="frameShadow">
-          <enum>QFrame::Raised</enum>
-         </property>
          <layout class="QVBoxLayout" name="layoutCompute">
           <property name="spacing">
            <number>12</number>
@@ -318,49 +666,333 @@
           <item>
            <widget class="QLabel" name="labelComputeTitle">
             <property name="text">
-             <string>算力资源</string>
+             <string>CPU / GPU 算力</string>
             </property>
-            <property name="alignment">
-             <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+            <property name="property" stdset="0">
+             <string notr="true">cardTitle</string>
             </property>
            </widget>
           </item>
           <item>
-           <widget class="QWidget" name="computePlaceholder" native="true">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
+           <layout class="QGridLayout" name="gridComputeInfo">
+            <property name="horizontalSpacing">
+             <number>8</number>
             </property>
-            <property name="styleSheet">
-             <string notr="true">background: rgba(255,255,255,40); border-radius: 16px;</string>
+            <property name="verticalSpacing">
+             <number>10</number>
             </property>
-            <layout class="QVBoxLayout" name="layoutComputePlaceholder">
-             <property name="leftMargin">
-              <number>12</number>
-             </property>
-             <property name="topMargin">
-              <number>12</number>
-             </property>
-             <property name="rightMargin">
-              <number>12</number>
-             </property>
-             <property name="bottomMargin">
-              <number>12</number>
-             </property>
-             <item>
-              <widget class="QLabel" name="labelComputePlaceholder">
-               <property name="text">
-                <string>CPU/GPU/RAM 等占位</string>
-               </property>
-               <property name="alignment">
-                <set>Qt::AlignCenter</set>
-               </property>
-              </widget>
-             </item>
-            </layout>
+            <item row="0" column="0">
+             <widget class="QLabel" name="labelCpuFreqKey">
+              <property name="text">
+               <string>CPU0 当前频率</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLabel" name="labelCpuFreqValue">
+              <property name="text">
+               <string>730 MHz</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="labelGpuFreqKey">
+              <property name="text">
+               <string>GPU 当前频率</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QLabel" name="labelGpuFreqValue">
+              <property name="text">
+               <string>306 MHz</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="0">
+             <widget class="QLabel" name="labelGpuModeKey">
+              <property name="text">
+               <string>GPU 电源控制</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <widget class="QLabel" name="labelGpuModeValue">
+              <property name="text">
+               <string>auto</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="0">
+             <widget class="QLabel" name="labelPowerModeKey">
+              <property name="text">
+               <string>电源模式</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="1">
+             <widget class="QLabel" name="labelPowerModeValue">
+              <property name="text">
+               <string>MAXN</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="4" column="0">
+             <widget class="QLabel" name="labelJetsonClocksKey">
+              <property name="text">
+               <string>jetson_clocks</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="4" column="1">
+             <widget class="QLabel" name="labelJetsonClocksValue">
+              <property name="text">
+               <string>False</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelCpuBarTitle">
+            <property name="text">
+             <string>CPU 整体占用</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">sectionTitle</string>
+            </property>
            </widget>
+          </item>
+          <item>
+           <widget class="QProgressBar" name="progressCpuTotal">
+            <property name="value">
+             <number>18</number>
+            </property>
+            <property name="textVisible">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="labelGpuBarTitle">
+            <property name="text">
+             <string>GPU 整体占用</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">sectionTitle</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QProgressBar" name="progressGpuTotal">
+            <property name="value">
+             <number>42</number>
+            </property>
+            <property name="textVisible">
+             <bool>false</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
+        <widget class="QFrame" name="frameThermal">
+         <layout class="QVBoxLayout" name="layoutThermal">
+          <property name="spacing">
+           <number>12</number>
+          </property>
+          <property name="leftMargin">
+           <number>16</number>
+          </property>
+          <property name="topMargin">
+           <number>16</number>
+          </property>
+          <property name="rightMargin">
+           <number>16</number>
+          </property>
+          <property name="bottomMargin">
+           <number>16</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="labelThermalTitle">
+            <property name="text">
+             <string>温度 / 风扇 / SoC</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">cardTitle</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QGridLayout" name="gridThermal">
+            <property name="horizontalSpacing">
+             <number>8</number>
+            </property>
+            <property name="verticalSpacing">
+             <number>10</number>
+            </property>
+            <item row="0" column="0">
+             <widget class="QLabel" name="labelTempCpuKey">
+              <property name="text">
+               <string>CPU</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLabel" name="labelTempCpuValue">
+              <property name="text">
+               <string>38.7 ℃</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="labelTempGpuKey">
+              <property name="text">
+               <string>GPU</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QLabel" name="labelTempGpuValue">
+              <property name="text">
+               <string>36.3 ℃</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="0">
+             <widget class="QLabel" name="labelTempSocKey">
+              <property name="text">
+               <string>SOC1</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <widget class="QLabel" name="labelTempSocValue">
+              <property name="text">
+               <string>39.0 ℃</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="0">
+             <widget class="QLabel" name="labelFanPercentKey">
+              <property name="text">
+               <string>风扇百分比</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="3" column="1">
+             <widget class="QLabel" name="labelFanPercentValue">
+              <property name="text">
+               <string>100%</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="4" column="0">
+             <widget class="QLabel" name="labelFanProfileKey">
+              <property name="text">
+               <string>风扇模式</string>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">keyText</string>
+              </property>
+             </widget>
+            </item>
+            <item row="4" column="1">
+             <widget class="QLabel" name="labelFanProfileValue">
+              <property name="text">
+               <string>manual</string>
+              </property>
+              <property name="alignment">
+               <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+              </property>
+              <property name="property" stdset="0">
+               <string notr="true">valueText</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>
@@ -369,12 +1001,6 @@
      </item>
      <item row="0" column="0" alignment="Qt::AlignLeft|Qt::AlignTop">
       <widget class="QToolButton" name="btnBack">
-       <property name="minimumSize">
-        <size>
-         <width>40</width>
-         <height>40</height>
-        </size>
-       </property>
        <property name="text">
         <string>&lt;</string>
        </property>
@@ -401,12 +1027,6 @@
      </property>
      <item row="0" column="0">
       <widget class="QFrame" name="frameEnergy">
-       <property name="frameShape">
-        <enum>QFrame::StyledPanel</enum>
-       </property>
-       <property name="frameShadow">
-        <enum>QFrame::Raised</enum>
-       </property>
        <layout class="QVBoxLayout" name="layoutEnergy">
         <property name="spacing">
          <number>12</number>
@@ -426,61 +1046,120 @@
         <item>
          <widget class="QLabel" name="labelEnergyTitle">
           <property name="text">
-           <string>能量资源</string>
+           <string>功耗 / 电源</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+          <property name="property" stdset="0">
+           <string notr="true">cardTitle</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QWidget" name="energyPlaceholder" native="true">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
+         <layout class="QGridLayout" name="gridEnergyInfo">
+          <property name="horizontalSpacing">
+           <number>8</number>
           </property>
-          <property name="styleSheet">
-           <string notr="true">background: rgba(255,255,255,40); border-radius: 16px;</string>
+          <property name="verticalSpacing">
+           <number>10</number>
           </property>
-          <layout class="QVBoxLayout" name="layoutEnergyPlaceholder">
-           <property name="leftMargin">
-            <number>12</number>
-           </property>
-           <property name="topMargin">
-            <number>12</number>
-           </property>
-           <property name="rightMargin">
-            <number>12</number>
-           </property>
-           <property name="bottomMargin">
-            <number>12</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="labelEnergyPlaceholder">
-             <property name="text">
-              <string>电量/功耗/温度 等占位</string>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignCenter</set>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelInputPowerKey">
+            <property name="text">
+             <string>总输入功耗</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLabel" name="labelInputPowerValue">
+            <property name="text">
+             <string>7.88 W</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelCpuGpuRailKey">
+            <property name="text">
+             <string>CPU/GPU 域功耗</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLabel" name="labelCpuGpuRailValue">
+            <property name="text">
+             <string>2.72 W</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelSocRailKey">
+            <property name="text">
+             <string>SOC 域功耗</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLabel" name="labelSocRailValue">
+            <property name="text">
+             <string>1.65 W</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelInputVoltKey">
+            <property name="text">
+             <string>输入电压</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QLabel" name="labelInputVoltValue">
+            <property name="text">
+             <string>12.16 V</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </item>
        </layout>
       </widget>
      </item>
      <item row="0" column="1">
       <widget class="QFrame" name="frameComm">
-       <property name="frameShape">
-        <enum>QFrame::StyledPanel</enum>
-       </property>
-       <property name="frameShadow">
-        <enum>QFrame::Raised</enum>
-       </property>
        <layout class="QVBoxLayout" name="layoutComm">
         <property name="spacing">
          <number>12</number>
@@ -500,61 +1179,120 @@
         <item>
          <widget class="QLabel" name="labelCommTitle">
           <property name="text">
-           <string>通信资源</string>
+           <string>网络 / 运行状态</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+          <property name="property" stdset="0">
+           <string notr="true">cardTitle</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QWidget" name="commPlaceholder" native="true">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
+         <layout class="QGridLayout" name="gridCommInfo">
+          <property name="horizontalSpacing">
+           <number>8</number>
           </property>
-          <property name="styleSheet">
-           <string notr="true">background: rgba(255,255,255,40); border-radius: 16px;</string>
+          <property name="verticalSpacing">
+           <number>10</number>
           </property>
-          <layout class="QVBoxLayout" name="layoutCommPlaceholder">
-           <property name="leftMargin">
-            <number>12</number>
-           </property>
-           <property name="topMargin">
-            <number>12</number>
-           </property>
-           <property name="rightMargin">
-            <number>12</number>
-           </property>
-           <property name="bottomMargin">
-            <number>12</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="labelCommPlaceholder">
-             <property name="text">
-              <string>信号强度/延迟/带宽 等占位</string>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignCenter</set>
-             </property>
-            </widget>
-           </item>
-          </layout>
-         </widget>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelEth0Key">
+            <property name="text">
+             <string>有线 IP</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLabel" name="labelEth0Value">
+            <property name="text">
+             <string>192.168.1.102</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelWlan0Key">
+            <property name="text">
+             <string>无线 IP</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLabel" name="labelWlan0Value">
+            <property name="text">
+             <string>192.168.2.90</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelDocker0Key">
+            <property name="text">
+             <string>Docker IP</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLabel" name="labelDocker0Value">
+            <property name="text">
+             <string>172.17.0.1</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelUptimeKey">
+            <property name="text">
+             <string>系统运行时长</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QLabel" name="labelUptimeValue">
+            <property name="text">
+             <string>4:17:55</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </item>
        </layout>
       </widget>
      </item>
      <item row="0" column="2">
       <widget class="QFrame" name="frameDisk">
-       <property name="frameShape">
-        <enum>QFrame::StyledPanel</enum>
-       </property>
-       <property name="frameShadow">
-        <enum>QFrame::Raised</enum>
-       </property>
        <layout class="QVBoxLayout" name="layoutDisk">
         <property name="spacing">
          <number>12</number>
@@ -574,48 +1312,123 @@
         <item>
          <widget class="QLabel" name="labelDiskTitle">
           <property name="text">
-           <string>磁盘资源</string>
+           <string>磁盘 / 存储</string>
           </property>
-          <property name="alignment">
-           <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
+          <property name="property" stdset="0">
+           <string notr="true">cardTitle</string>
           </property>
          </widget>
         </item>
         <item>
-         <widget class="QWidget" name="diskPlaceholder" native="true">
-          <property name="sizePolicy">
-           <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-            <horstretch>0</horstretch>
-            <verstretch>0</verstretch>
-           </sizepolicy>
+         <layout class="QGridLayout" name="gridDiskInfo">
+          <property name="horizontalSpacing">
+           <number>8</number>
           </property>
-          <property name="styleSheet">
-           <string notr="true">background: rgba(255,255,255,40); border-radius: 16px;</string>
+          <property name="verticalSpacing">
+           <number>10</number>
           </property>
-          <layout class="QVBoxLayout" name="layoutDiskPlaceholder">
-           <property name="leftMargin">
-            <number>12</number>
-           </property>
-           <property name="topMargin">
-            <number>12</number>
-           </property>
-           <property name="rightMargin">
-            <number>12</number>
-           </property>
-           <property name="bottomMargin">
-            <number>12</number>
-           </property>
-           <item>
-            <widget class="QLabel" name="labelDiskPlaceholder">
-             <property name="text">
-              <string>存储占用/读写速度 等占位</string>
-             </property>
-             <property name="alignment">
-              <set>Qt::AlignCenter</set>
-             </property>
-            </widget>
-           </item>
-          </layout>
+          <item row="0" column="0">
+           <widget class="QLabel" name="labelDiskTotalKey">
+            <property name="text">
+             <string>总容量</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <widget class="QLabel" name="labelDiskTotalValue">
+            <property name="text">
+             <string>115.38 GB</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="labelDiskUsedKey">
+            <property name="text">
+             <string>已用</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <widget class="QLabel" name="labelDiskUsedValue">
+            <property name="text">
+             <string>101.49 GB</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="labelDiskAvailKey">
+            <property name="text">
+             <string>可用</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLabel" name="labelDiskAvailValue">
+            <property name="text">
+             <string>13.89 GB</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="labelDiskUsageKey">
+            <property name="text">
+             <string>使用率</string>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">keyText</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QLabel" name="labelDiskUsageValue">
+            <property name="text">
+             <string>88%</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="property" stdset="0">
+             <string notr="true">valueText</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QProgressBar" name="progressDiskUsage">
+          <property name="value">
+           <number>88</number>
+          </property>
+          <property name="textVisible">
+           <bool>false</bool>
+          </property>
          </widget>
         </item>
        </layout>

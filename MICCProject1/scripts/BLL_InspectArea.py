@@ -27,7 +27,9 @@ class BLL_InspectArea(QDialog):
         self.areaid = None
         self.init_ui()
         self.load_inspectarea() #加载地区信息
-        self._init_nav()
+        # Remove step controls (区域->点位->路线 + arrows/close) per latest UI request.
+        # Keep business flow callbacks, but no longer render this nav bar.
+        # self._init_nav()
         #self.setFixedSize(1639, 636)
 
     def _init_nav(self) -> None:
