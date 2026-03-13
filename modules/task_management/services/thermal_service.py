@@ -69,7 +69,7 @@ class ThermalService:
         return self._read_sim_frame()
 
     def _connect_thermal(self, device_text: str) -> None:
-        port = device_text.replace("serial://", "").strip() or "COM3"
+        port = device_text.replace("serial://", "").strip() or "/dev/ttyUSB0"
         self._thermal_adapter = ThermalCameraAdapter(port=port, baudrate=115200)
         self._thermal_adapter.connect()
         self._mode = "thermal"

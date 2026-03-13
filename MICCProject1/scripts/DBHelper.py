@@ -34,8 +34,8 @@ class DBHelper:
         self.db_config = {
             "host": cfg.get("DB_HOST", "127.0.0.1"),
             "port": int(cfg.get("DB_PORT", "3306") or 3306),
-            "user": cfg.get("DB_USER", "root"),
-            "password": cfg.get("DB_PASS", "123456"),
+            "user": cfg.get("DB_USER", "uav"),
+            "password": cfg.get("DB_PASS", "uav123456"),
             "db_name": cfg.get("DB_NAME", "UGV_DB"),
             "mysqldump_path": cfg.get("mysqldump_path") or "mysqldump",
             "mysql_path": cfg.get("mysql_path") or "mysql",
