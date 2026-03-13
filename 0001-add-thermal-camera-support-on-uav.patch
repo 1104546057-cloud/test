@@ -1,0 +1,107 @@
+From 57575fd2f2e6b7bc816a4fe096c002da3d2fb613 Mon Sep 17 00:00:00 2001
+From: 1104546057-cloud <1104546057@qq.com>
+Date: Fri, 13 Mar 2026 20:49:54 +0800
+Subject: [PATCH] add thermal camera support on uav
+
+---
+ MICCProject1/config.ini.bak                   | 11 ++++++
+ MICCProject1/scripts/DBHelper.py              |  4 +--
+ .../pages/TargetRecognition_new_page.py       | 35 +++++++++++++++++++
+ .../services/thermal_service.py               |  2 +-
+ 4 files changed, 49 insertions(+), 3 deletions(-)
+ create mode 100644 MICCProject1/config.ini.bak
+
+diff --git a/MICCProject1/config.ini.bak b/MICCProject1/config.ini.bak
+new file mode 100644
+index 0000000..219d043
+--- /dev/null
++++ b/MICCProject1/config.ini.bak
+@@ -0,0 +1,11 @@
++[mysql]
++db_host = 127.0.0.1
++db_port = 3306
++db_user = root
++db_pass = 123456
++db_name = device_management
++mysqldump_path = 
++mysql_path = 
++auto_backup_path = ./auto_backups
++manual_backup_path = ./manual_backups
++
+diff --git a/MICCProject1/scripts/DBHelper.py b/MICCProject1/scripts/DBHelper.py
+index 3cbb9f0..caac4b0 100644
+--- a/MICCProject1/scripts/DBHelper.py
++++ b/MICCProject1/scripts/DBHelper.py
+@@ -34,8 +34,8 @@ class DBHelper:
+         self.db_config = {
+             "host": cfg.get("DB_HOST", "127.0.0.1"),
+             "port": int(cfg.get("DB_PORT", "3306") or 3306),
+-            "user": cfg.get("DB_USER", "root"),
+-            "password": cfg.get("DB_PASS", "123456"),
++            "user": cfg.get("DB_USER", "uav"),
++            "password": cfg.get("DB_PASS", "uav123456"),
+             "db_name": cfg.get("DB_NAME", "UGV_DB"),
+             "mysqldump_path": cfg.get("mysqldump_path") or "mysqldump",
+             "mysql_path": cfg.get("mysql_path") or "mysql",
+diff --git a/modules/task_management/pages/TargetRecognition_new_page.py b/modules/task_management/pages/TargetRecognition_new_page.py
+index d111499..ade6328 100644
+--- a/modules/task_management/pages/TargetRecognition_new_page.py
++++ b/modules/task_management/pages/TargetRecognition_new_page.py
+@@ -272,6 +272,41 @@ class TargetRecognitionNewPage(QMainWindow, Ui_MainWindow):
+         if packet is None:
+             return
+ 
++        source = self.comboBox_source.currentText()
++
++        if source == "热成像摄像头":
++            # 热成像模式：不走检测，只显示热图和温度信息
++            self._render_video(packet.frame_bgr)
++
++            self.tableWidget_results.setRowCount(3)
++            self.tableWidget_results.setColumnCount(2)
++            self.tableWidget_results.setHorizontalHeaderLabels(["温度项", "数值"])
++
++            temps = [
++                ("最高温度", f"{packet.max_temp:.2f} °C" if packet.max_temp is not None else "--"),
++                ("最低温度", f"{packet.min_temp:.2f} °C" if packet.min_temp is not None else "--"),
++                ("中心温度", f"{packet.center_temp:.2f} °C" if packet.center_temp is not None else "--"),
++            ]
++
++            for r, (k, v) in enumerate(temps):
++                self.tableWidget_results.setItem(r, 0, QTableWidgetItem(k))
++                self.tableWidget_results.setItem(r, 1, QTableWidgetItem(v))
++
++            self.label_objects_value.setText("0")
++            self.label_fps_value.setText(f"{packet.source_fps:.1f}")
++            self.label_latency_value.setText("0 ms")
++            self.label_speed_value.setText("0.0 km/h")
++
++            self.progressBar_steer.setValue(0)
++            self.progressBar_brake.setValue(0)
++            self.progressBar_battery.setValue(100)
++
++            if packet.max_temp is not None and packet.min_temp is not None:
++                self.label_project.setText(
++                    f"模式：热成像检测  Tmax={packet.max_temp:.1f}°C Tmin={packet.min_temp:.1f}°C"
++                )
++            return
++
+         conf = self.horizontalSlider_confidence.value() / 100.0
+         batch = self._detection_service.infer(packet.frame_bgr, conf)
+ 
+diff --git a/modules/task_management/services/thermal_service.py b/modules/task_management/services/thermal_service.py
+index 818e6f1..89c0038 100644
+--- a/modules/task_management/services/thermal_service.py
++++ b/modules/task_management/services/thermal_service.py
+@@ -69,7 +69,7 @@ class ThermalService:
+         return self._read_sim_frame()
+ 
+     def _connect_thermal(self, device_text: str) -> None:
+-        port = device_text.replace("serial://", "").strip() or "COM3"
++        port = device_text.replace("serial://", "").strip() or "/dev/ttyUSB0"
+         self._thermal_adapter = ThermalCameraAdapter(port=port, baudrate=115200)
+         self._thermal_adapter.connect()
+         self._mode = "thermal"
+-- 
+2.25.1
+
