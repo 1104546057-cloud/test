@@ -10,6 +10,7 @@ loguru>=0.7.3
 
 numpy>=2.4.2
 roslibpy>=2.0.0
+psutil>=7.0.0
 
 PyQt6>=6.10.0
 PyQt6-WebEngine>=6.10.0

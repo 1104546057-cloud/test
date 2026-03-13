@@ -1,11 +1,12 @@
 import sys
 
 from PyQt5 import QtWidgets
-from PyQt5.QtCore import Qt, QSize, QRectF, QPointF
+from PyQt5.QtCore import Qt, QSize, QRectF, QPointF, QTimer
 from PyQt5.QtGui import QColor, QPainterPath, QRegion, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect
 from qfluentwidgets import FluentIcon as FIF, ThemeColor
 
+from modules.status_monitoring.services import MonitoringService
 from modules.status_monitoring.ui.generated.RCMonitoring import Ui_Form
 
 
@@ -24,7 +25,8 @@ class RCMonitoringPage(QtWidgets.QWidget, Ui_Form):
         self.apply_placeholders()
         self.apply_titles()
         self.apply_topbar_buttons()
-        self.apply_demo_content()
+        self._monitoring_service = MonitoringService()
+        self._setup_monitoring()
 
     def setup_topbar(self) -> None:
         grid = getattr(self, "gridMain", None)
@@ -162,26 +164,86 @@ class RCMonitoringPage(QtWidgets.QWidget, Ui_Form):
             if lbl:
                 lbl.setStyleSheet(title_qss)
 
-    def apply_demo_content(self) -> None:
-        self._status_items = [
-            ("OK", "All systems nominal"),
-            ("INFO", "Telemetry linked"),
-            ("OK", "Sensors synced"),
-        ]
-        self._speed_series = [12, 18, 22, 30, 26, 34, 28, 36, 42, 38, 44, 50]
+    def _setup_monitoring(self) -> None:
+        self._monitoring_service.start()
+        self._apply_monitoring_snapshot(self._monitoring_service.get_snapshot())
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.setInterval(1000)
+        self._refresh_timer.timeout.connect(self._refresh_monitoring)
+        self._refresh_timer.start()
 
-        self._compute_usage = {"CPU": 38, "GPU": 22, "RAM": 64}
-        self._energy_stats = {"Battery": 76, "Power": 48, "Temp": 42}
-        self._comm_stats = {"Signal": 82, "Latency": 24, "Bandwidth": 18}
-        self._disk_stats = {"Usage": 63, "Read": 120, "Write": 88}
+    def _refresh_monitoring(self) -> None:
+        snapshot = self._monitoring_service.refresh()
+        self._apply_monitoring_snapshot(snapshot)
+
+    def _apply_monitoring_snapshot(self, snapshot: dict) -> None:
+        self._status_items = self._monitoring_service.get_status_items()
+        self._speed_series = list(snapshot.get("motion", {}).get("speed_series", []))
+        if not self._speed_series:
+            self._speed_series = self._monitoring_service.get_speed_series()["points"]
+
+        cpu = snapshot.get("cpu", {})
+        gpu = snapshot.get("gpu", {})
+        memory = snapshot.get("memory", {})
+        power = snapshot.get("power", {})
+        network = snapshot.get("network", {})
+        disk = snapshot.get("disk", {})
+        motion = snapshot.get("motion", {})
+        fan = snapshot.get("fan", {})
+        system = snapshot.get("system", {})
 
         self.set_status_items(self._status_items)
         self.set_speed_series(self._speed_series)
-        self.set_realtime_text("Map preview")
-        self.set_compute_usage(**self._compute_usage)
-        self.set_energy_stats(**self._energy_stats)
-        self.set_comm_stats(**self._comm_stats)
-        self.set_disk_stats(**self._disk_stats)
+        self.set_realtime_text(
+            "\n".join(
+                [
+                    motion.get("position_text", "Telemetry pending"),
+                    motion.get("map_status", "Map status unavailable"),
+                    f"Host {network.get('ip', 'Unavailable')}",
+                ]
+            )
+        )
+        self.set_compute_usage(
+            [
+                ("CPU", f"{int(round(cpu.get('usage', 0)))}%"),
+                ("GPU", f"{int(round(gpu.get('usage', 0)))}%"),
+                ("RAM", f"{int(round(memory.get('percent', 0)))}%"),
+                ("CPU Freq", f"{cpu.get('freq_mhz', 0):.0f} MHz"),
+                ("GPU Freq", f"{gpu.get('freq_mhz', 0):.0f} MHz"),
+                ("CPU Temp", f"{cpu.get('temp_c', 0):.1f} C"),
+                ("GPU Temp", f"{gpu.get('temp_c', 0):.1f} C"),
+            ]
+        )
+        self.set_energy_stats(
+            [
+                ("Power", f"{power.get('total_w', 0):.2f} W"),
+                ("Voltage", f"{power.get('voltage_v', 0):.2f} V"),
+                ("CPU/GPU", f"{power.get('cpu_gpu_cv_w', 0):.2f} W"),
+                ("SOC", f"{power.get('soc_w', 0):.2f} W"),
+                ("Fan", f"{fan.get('rpm', 0)} RPM"),
+                ("Mode", str(power.get("nvpmodel", "Unavailable"))),
+            ]
+        )
+        self.set_comm_stats(
+            [
+                ("Signal", f"{int(round(network.get('signal_percent', 0)))}%"),
+                ("Latency", f"{int(round(network.get('latency_ms', 0)))} ms"),
+                ("Bandwidth", f"{network.get('bandwidth_mb_s', 0):.2f} MB/s"),
+                ("IP", str(network.get("ip", "Unavailable"))),
+                ("JetPack", str(system.get("jetpack", "Unavailable"))),
+                ("CUDA", str(system.get("cuda", "Unavailable"))),
+            ]
+        )
+        self.set_disk_stats(
+            [
+                ("Usage", f"{int(round(disk.get('percent', 0)))}%"),
+                ("Used", f"{disk.get('used_gb', 0):.1f} GB"),
+                ("Total", f"{disk.get('total_gb', 0):.1f} GB"),
+                ("Read", f"{disk.get('read_mb_s', 0):.2f} MB/s"),
+                ("Write", f"{disk.get('write_mb_s', 0):.2f} MB/s"),
+                ("TensorRT", str(system.get("tensorrt", "Unavailable"))),
+            ]
+        )
 
     def _clear_layout(self, layout) -> None:
         while layout.count():
@@ -297,16 +359,18 @@ class RCMonitoringPage(QtWidgets.QWidget, Ui_Form):
         if not w:
             return
         layout = self._ensure_layout(w)
-        row = QtWidgets.QWidget()
-        row_layout = QtWidgets.QHBoxLayout(row)
-        row_layout.setContentsMargins(0, 0, 0, 0)
-        row_layout.setSpacing(8)
-        row_layout.addWidget(self._icon_label(FIF.PIN))
-        lbl = QtWidgets.QLabel(text)
-        lbl.setStyleSheet("color: #3b4552; font-size: 12px;")
-        row_layout.addWidget(lbl)
-        row_layout.addStretch(1)
-        layout.addWidget(row)
+        for idx, line in enumerate([part for part in text.splitlines() if part.strip()]):
+            row = QtWidgets.QWidget()
+            row_layout = QtWidgets.QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+            row_layout.addWidget(self._icon_label(FIF.PIN if idx == 0 else FIF.INFO))
+            lbl = QtWidgets.QLabel(line)
+            lbl.setStyleSheet("color: #3b4552; font-size: 12px;")
+            lbl.setWordWrap(True)
+            row_layout.addWidget(lbl)
+            row_layout.addStretch(1)
+            layout.addWidget(row)
 
     def _set_stat_block(self, placeholder_name: str, stats: list[tuple[str, str]]) -> None:
         w = getattr(self, placeholder_name, None)
@@ -316,29 +380,17 @@ class RCMonitoringPage(QtWidgets.QWidget, Ui_Form):
         for name, value in stats:
             layout.addWidget(self._make_stat_row(name, value))
 
-    def set_compute_usage(self, CPU: int, GPU: int, RAM: int) -> None:
-        self._set_stat_block(
-            "computePlaceholder",
-            [("CPU", f"{CPU}%"), ("GPU", f"{GPU}%"), ("RAM", f"{RAM}%")],
-        )
+    def set_compute_usage(self, stats) -> None:
+        self._set_stat_block("computePlaceholder", stats)
 
-    def set_energy_stats(self, Battery: int, Power: int, Temp: int) -> None:
-        self._set_stat_block(
-            "energyPlaceholder",
-            [("Battery", f"{Battery}%"), ("Power", f"{Power}W"), ("Temp", f"{Temp}C")],
-        )
+    def set_energy_stats(self, stats) -> None:
+        self._set_stat_block("energyPlaceholder", stats)
 
-    def set_comm_stats(self, Signal: int, Latency: int, Bandwidth: int) -> None:
-        self._set_stat_block(
-            "commPlaceholder",
-            [("Signal", f"{Signal}%"), ("Latency", f"{Latency}ms"), ("Bandwidth", f"{Bandwidth}Mb/s")],
-        )
+    def set_comm_stats(self, stats) -> None:
+        self._set_stat_block("commPlaceholder", stats)
 
-    def set_disk_stats(self, Usage: int, Read: int, Write: int) -> None:
-        self._set_stat_block(
-            "diskPlaceholder",
-            [("Usage", f"{Usage}%"), ("Read", f"{Read}MB/s"), ("Write", f"{Write}MB/s")],
-        )
+    def set_disk_stats(self, stats) -> None:
+        self._set_stat_block("diskPlaceholder", stats)
     def apply_topbar_buttons(self) -> None:
         accent = ThemeColor.PRIMARY.color()
         btn_style = (
@@ -397,6 +449,13 @@ class RCMonitoringPage(QtWidgets.QWidget, Ui_Form):
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
         if hasattr(self, "_speed_series"):
             self._render_speed_chart(self._speed_series)
+
+    def closeEvent(self, event):
+        if hasattr(self, "_refresh_timer"):
+            self._refresh_timer.stop()
+        if hasattr(self, "_monitoring_service"):
+            self._monitoring_service.stop()
+        super().closeEvent(event)
 
 
 if __name__ == "__main__":
