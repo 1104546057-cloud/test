@@ -272,6 +272,41 @@ class TargetRecognitionNewPage(QMainWindow, Ui_MainWindow):
         if packet is None:
             return
 
+        source = self.comboBox_source.currentText()
+
+        if source == "热成像摄像头":
+            # 热成像模式：不走检测，只显示热图和温度信息
+            self._render_video(packet.frame_bgr)
+
+            self.tableWidget_results.setRowCount(3)
+            self.tableWidget_results.setColumnCount(2)
+            self.tableWidget_results.setHorizontalHeaderLabels(["温度项", "数值"])
+
+            temps = [
+                ("最高温度", f"{packet.max_temp:.2f} °C" if packet.max_temp is not None else "--"),
+                ("最低温度", f"{packet.min_temp:.2f} °C" if packet.min_temp is not None else "--"),
+                ("中心温度", f"{packet.center_temp:.2f} °C" if packet.center_temp is not None else "--"),
+            ]
+
+            for r, (k, v) in enumerate(temps):
+                self.tableWidget_results.setItem(r, 0, QTableWidgetItem(k))
+                self.tableWidget_results.setItem(r, 1, QTableWidgetItem(v))
+
+            self.label_objects_value.setText("0")
+            self.label_fps_value.setText(f"{packet.source_fps:.1f}")
+            self.label_latency_value.setText("0 ms")
+            self.label_speed_value.setText("0.0 km/h")
+
+            self.progressBar_steer.setValue(0)
+            self.progressBar_brake.setValue(0)
+            self.progressBar_battery.setValue(100)
+
+            if packet.max_temp is not None and packet.min_temp is not None:
+                self.label_project.setText(
+                    f"模式：热成像检测  Tmax={packet.max_temp:.1f}°C Tmin={packet.min_temp:.1f}°C"
+                )
+            return
+
         conf = self.horizontalSlider_confidence.value() / 100.0
         batch = self._detection_service.infer(packet.frame_bgr, conf)
 
