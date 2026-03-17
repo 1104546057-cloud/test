@@ -762,39 +762,8 @@ class BLL_InspectRoute(QDialog):
         )
 
     def _refresh_route_map(self, route_id=None) -> None:
-        if self.web_view is None:
-            return
-
-        route_id = route_id if route_id is not None else self.routeid
-        if not route_id:
-            self._clear_route_map()
-            return
-
-        recordlist = self.db.fetch_all(
-            """
-            SELECT ip.Longitude, ip.Latitude, ip.PointName
-            FROM InspectRoutePoint rp
-            JOIN InspectPoint ip ON rp.PointId = ip.PointId
-            WHERE rp.RouteId = %s
-            ORDER BY rp.SortNo
-            """,
-            (route_id,),
-        )
-
-        points = []
-        for record in recordlist:
-            lng = record.get("Longitude")
-            lat = record.get("Latitude")
-            if lng is None or lat is None:
-                continue
-            points.append(
-                {
-                    "lng": float(lng),
-                    "lat": float(lat),
-                    "name": record.get("PointName") or "",
-                }
-            )
-        self._apply_route_map_points(points)
+        # 室内模式下不再使用高德经纬度预览，路线请直接在 RViz 中查看
+        self._clear_route_map()
 
     def _dock_nav_bar(self) -> bool:
         return False
@@ -1078,7 +1047,7 @@ class BLL_InspectRoute(QDialog):
             return
 
         recordlist = self.db.fetch_all(
-            "SELECT PointId, PointName, Longitude, Latitude FROM InspectPoint WHERE AreaId=%s AND Status=1",
+            "SELECT PointId, PointName, MapX, MapY, YawDeg FROM InspectPoint WHERE AreaId=%s AND Status=1",
             (areaid,),
         )
         table.setColumnCount(3)
@@ -1086,8 +1055,8 @@ class BLL_InspectRoute(QDialog):
             table.insertRow(row)
             table.setItem(row, 0, QTableWidgetItem(str(record.get("PointId", ""))))
             table.setItem(row, 1, QTableWidgetItem(str(record.get("PointName", ""))))
-            lng_lat = f"{record.get('Longitude', '')},{record.get('Latitude', '')}"
-            table.setItem(row, 2, QTableWidgetItem(lng_lat))
+            pose_text = f"{record.get('MapX', '')},{record.get('MapY', '')},{record.get('YawDeg', 0)}°"
+            table.setItem(row, 2, QTableWidgetItem(pose_text))
 
     def load_inspectPointByRouteId(self, route_id) -> None:
         if not self._ensure_route_point_table(show_tip=False):
@@ -1096,9 +1065,11 @@ class BLL_InspectRoute(QDialog):
                 table.setRowCount(0)
             self._clear_route_map()
             return
+
         table = getattr(self.ui, "tv_InspectPoint2", None)
         if table is None:
             return
+
         self._loading_route_points = True
         try:
             table.setRowCount(0)
@@ -1108,7 +1079,7 @@ class BLL_InspectRoute(QDialog):
 
             recordlist = self.db.fetch_all(
                 """
-                SELECT ip.PointId, ip.PointName, ip.Longitude, ip.Latitude,
+                SELECT ip.PointId, ip.PointName, ip.MapX, ip.MapY, ip.YawDeg,
                        rp.StayTime, rp.InspectAngle, rp.SortNo
                 FROM InspectRoutePoint rp
                 JOIN InspectPoint ip ON rp.PointId = ip.PointId
@@ -1120,25 +1091,27 @@ class BLL_InspectRoute(QDialog):
             table.setColumnCount(6)
             for row, record in enumerate(recordlist):
                 table.insertRow(row)
+
                 point_id_item = QTableWidgetItem(str(record.get("PointId", "")))
                 point_name_item = QTableWidgetItem(str(record.get("PointName", "")))
-                lng_lat = f"{record.get('Longitude', '')},{record.get('Latitude', '')}"
-                lng_lat_item = QTableWidgetItem(lng_lat)
+                pose_text = f"{record.get('MapX', '')},{record.get('MapY', '')},{record.get('YawDeg', 0)}°"
+                pose_item = QTableWidgetItem(pose_text)
                 stay_item = QTableWidgetItem(str(record.get("StayTime", 10)))
                 angle_item = QTableWidgetItem(str(record.get("InspectAngle", 0)))
                 sort_item = QTableWidgetItem(str(record.get("SortNo", row + 1)))
 
-                for readonly_item in (point_id_item, point_name_item, lng_lat_item, sort_item):
+                for readonly_item in (point_id_item, point_name_item, pose_item, sort_item):
                     readonly_item.setFlags(readonly_item.flags() & ~Qt.ItemIsEditable)
 
                 table.setItem(row, 0, point_id_item)
                 table.setItem(row, 1, point_name_item)
-                table.setItem(row, 2, lng_lat_item)
+                table.setItem(row, 2, pose_item)
                 table.setItem(row, 3, stay_item)
                 table.setItem(row, 4, angle_item)
                 table.setItem(row, 5, sort_item)
         finally:
             self._loading_route_points = False
+
         self._refresh_route_map(route_id)
 
     def _persist_route_point_order(self) -> None:
@@ -1321,25 +1294,16 @@ class BLL_InspectRoute(QDialog):
         self.load_inspectroute()
         QMessageBox.information(self, "完成", "路线点位关系已保存")
 
-    def calculate_distance(self, lng1, lat1, lng2, lat2) -> float:
-        radius = 6371000
-        lng1_rad = math.radians(float(lng1))
-        lat1_rad = math.radians(float(lat1))
-        lng2_rad = math.radians(float(lng2))
-        lat2_rad = math.radians(float(lat2))
-
-        dlng = lng2_rad - lng1_rad
-        dlat = lat2_rad - lat1_rad
-        a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng / 2) ** 2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return radius * c
+    def calculate_distance(self, x1, y1, x2, y2) -> float:
+        return math.hypot(float(x2) - float(x1), float(y2) - float(y1))
 
     def calculate_route_metrics(self, route_id: int):
         if not self._ensure_route_point_table(show_tip=False):
             return 0, 0.0, 0.0
+
         rows = self.db.fetch_all(
             """
-            SELECT rp.PointId, rp.SortNo, rp.StayTime, ip.Longitude, ip.Latitude
+            SELECT rp.PointId, rp.SortNo, rp.StayTime, ip.MapX, ip.MapY
             FROM InspectRoutePoint rp
             LEFT JOIN InspectPoint ip ON rp.PointId = ip.PointId
             WHERE rp.RouteId = %s
@@ -1353,11 +1317,11 @@ class BLL_InspectRoute(QDialog):
         for i in range(max(0, point_count - 1)):
             p1 = rows[i]
             p2 = rows[i + 1]
-            if p1.get("Longitude") is None or p1.get("Latitude") is None:
+            if p1.get("MapX") is None or p1.get("MapY") is None:
                 continue
-            if p2.get("Longitude") is None or p2.get("Latitude") is None:
+            if p2.get("MapX") is None or p2.get("MapY") is None:
                 continue
-            path_length += self.calculate_distance(p1["Longitude"], p1["Latitude"], p2["Longitude"], p2["Latitude"])
+            path_length += self.calculate_distance(p1["MapX"], p1["MapY"], p2["MapX"], p2["MapY"])
 
         stay_total = sum(int(r.get("StayTime") or 0) for r in rows)
         move_time = path_length / 0.5 if path_length > 0 else 0

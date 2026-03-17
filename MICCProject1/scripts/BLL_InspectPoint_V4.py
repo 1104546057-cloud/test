@@ -1,4 +1,5 @@
-﻿import sys
+﻿import math
+import sys
 from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
@@ -33,12 +34,20 @@ class BLL_InspectPoint(QMainWindow):
         self.load_inspectpoint() #加载巡检点位
         self.load_inspectarea() # 加载巡检区域
 
-        # 初始化当前选中的经纬度和点位ID
+        # 兼容旧字段名，但室内模式下这里实际承载的是 map_x / map_y
         self.selected_lng = None
         self.selected_lat = None
+        self.selected_map_x = None
+        self.selected_map_y = None
+        self.selected_yaw_deg = 0.0
         self.current_point_id = None
-        # 初始化地图通信
+
+        # 初始化地图通信（旧高德地图保留，不作为室内录点主入口）
         self.init_map_channel()
+
+        # 新增：接入 ROS，支持从 RViz 的 /move_base_simple/goal 录点
+        self._ros_goal_bridge = None
+        self._init_ros_goal_bridge()
 
         #self.setFixedSize(1639, 636)
 
@@ -232,18 +241,29 @@ class BLL_InspectPoint(QMainWindow):
 
     def load_inspectpoint(self) -> None:
         self.ui.tv_InspectPoint.setRowCount(0)
-        recordlist = self.db.fetch_all("select *, ia.AreaName from InspectArea ia, InspectPoint ip where ip.AreaID = ia.AreaID")
+        recordlist = self.db.fetch_all(
+            "select *, ia.AreaName from InspectArea ia, InspectPoint ip where ip.AreaID = ia.AreaID"
+        )
         for row, record in enumerate(recordlist):
             self.ui.tv_InspectPoint.insertRow(row)
-            self.ui.tv_InspectPoint.setItem(row, 0, QTableWidgetItem(str(record.get("PointId", ""))))  # 巡检点位ID
-            self.ui.tv_InspectPoint.setItem(row, 1, QTableWidgetItem(str(record.get("PointName", ""))))  #点位名称
-            self.ui.tv_InspectPoint.setItem(row, 2, QTableWidgetItem(str(record.get("AreaName", ""))))   #区域名称
-            self.ui.tv_InspectPoint.setItem(row, 3,  QTableWidgetItem(str(record.get("Longitude",""))))  #经度
-            self.ui.tv_InspectPoint.setItem(row, 4, QTableWidgetItem(str(record.get("Latitude",""))))  #纬度
-            self.ui.tv_InspectPoint.setItem(row, 5, QTableWidgetItem("启用" if record.get("Status") == 1 else "禁用" )) #状态
+
+            map_x = record.get("MapX")
+            map_y = record.get("MapY")
+            if map_x is None:
+                map_x = record.get("Longitude", "")
+            if map_y is None:
+                map_y = record.get("Latitude", "")
+
+            self.ui.tv_InspectPoint.setItem(row, 0, QTableWidgetItem(str(record.get("PointId", ""))))
+            self.ui.tv_InspectPoint.setItem(row, 1, QTableWidgetItem(str(record.get("PointName", ""))))
+            self.ui.tv_InspectPoint.setItem(row, 2, QTableWidgetItem(str(record.get("AreaName", ""))))
+            self.ui.tv_InspectPoint.setItem(row, 3, QTableWidgetItem(str(map_x)))
+            self.ui.tv_InspectPoint.setItem(row, 4, QTableWidgetItem(str(map_y)))
+            self.ui.tv_InspectPoint.setItem(
+                row, 5, QTableWidgetItem("启用" if record.get("Status") == 1 else "禁用")
+            )
 
         self.setup_table_view()
-
 
     def load_inspectarea(self):
         self.ui.txt_AreaId.clear()
@@ -263,7 +283,7 @@ class BLL_InspectPoint(QMainWindow):
             self.ui.lab_Note.setText("请先创建并选择巡检区域后再保存点位！")
             self.ui.lab_Note.setStyleSheet("color: red;")
             return False
-        # 定义必填字段（控件变量 -> 字段名称）
+
         required = {
             self.ui.txt_PointName: "点位名称",
             self.ui.txt_PointCode: "点位编码"
@@ -273,6 +293,12 @@ class BLL_InspectPoint(QMainWindow):
                 self.ui.lab_Note.setText(f"{field_name}为必填项，请填写完整！")
                 self.ui.lab_Note.setStyleSheet("color: red;")
                 return False
+
+        if not self.ui.txt_Longitude.text().strip() or not self.ui.txt_Latitude.text().strip():
+            self.ui.lab_Note.setText("请先在 RViz 中使用 2D Nav Goal 采集点位坐标！")
+            self.ui.lab_Note.setStyleSheet("color: red;")
+            return False
+
         return True
 
     def setup_table_view(self) -> None:
@@ -447,79 +473,109 @@ class BLL_InspectPoint(QMainWindow):
     def on_save(self) -> None:
         if not self.validate_required():
             return
-        else:
-            areaId = self.ui.txt_AreaId.currentData()
-            pointName = self.ui.txt_PointName.text().strip()
-            pointCode = self.ui.txt_PointCode.text().strip()
-            pointType = self.ui.txt_PointType.currentIndex()
-            longitude = self.ui.txt_Longitude.text().strip()
-            latitude = self.ui.txt_Latitude.text().strip()
-            remark = self.ui.txt_Remark.text().strip()
-            try:
-                # 如果是添加用户，则要检测用户名
-                if self.pointid:
-                    query = """
-                    UPDATE InspectPoint
-                    SET AreaId = %s, PointName = %s, PointCode = %s, PointType=%s, Longitude=%s, Latitude=%s,  Remark = %s
-                    WHERE PointId = %s
-                    """
-                    params = (areaId, pointName, pointCode, pointType, longitude, latitude, remark,  self.pointid)
-                    i = self.db.execute_query(query, params)
-                    if (i>0):
-                        self.ui.lab_Note.setText("巡检点位信息修改成功！")
-                        self.clear_input()
-                        self.load_inspectpoint()
-                    else:
-                        self.ui.lab_Note.setText("巡检点位信息修改失败！" )
-                else:
-                    query = """
-                        INSERT INTO InspectPoint (AreaId, PointName, PointCode, PointType, Longitude, Latitude, Remark, Status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, 1)
-                        """
-                    params = (areaId, pointName, pointCode, pointType, longitude, latitude, remark)
-                    i = self.db.execute_query(query, params)
-                    if (i>0):
-                        self.ui.lab_Note.setText("巡检点位信息添加成功！" )
-                        self.clear_input()
-                        self.load_inspectpoint()
-                    else:
-                        self.ui.lab_Note.setText("巡检点位信息添加失败！" )
-            except Exception as exc:
-                self.ui.lab_Note.setText("巡检点位信息保存失败！"+str(exc))
-                return
 
-    # 选中某一项巡检点位数据
+        areaId = self.ui.txt_AreaId.currentData()
+        pointName = self.ui.txt_PointName.text().strip()
+        pointCode = self.ui.txt_PointCode.text().strip()
+        pointType = self.ui.txt_PointType.currentIndex()
+        map_x_text = self.ui.txt_Longitude.text().strip()
+        map_y_text = self.ui.txt_Latitude.text().strip()
+        remark = self.ui.txt_Remark.text().strip()
+
+        try:
+            map_x = float(map_x_text)
+            map_y = float(map_y_text)
+            yaw_deg = float(self.selected_yaw_deg or 0.0)
+        except Exception:
+            self.ui.lab_Note.setText("坐标格式错误，请重新采集 RViz 点位！")
+            self.ui.lab_Note.setStyleSheet("color: red;")
+            return
+
+        try:
+            if self.pointid:
+                query = """
+                UPDATE InspectPoint
+                SET AreaId = %s,
+                    PointName = %s,
+                    PointCode = %s,
+                    PointType = %s,
+                    Longitude = NULL,
+                    Latitude = NULL,
+                    MapX = %s,
+                    MapY = %s,
+                    YawDeg = %s,
+                    Remark = %s
+                WHERE PointId = %s
+                """
+                params = (
+                    areaId, pointName, pointCode, pointType,
+                    map_x, map_y, yaw_deg, remark, self.pointid
+                )
+                i = self.db.execute_query(query, params)
+                if i > 0:
+                    self.ui.lab_Note.setText("巡检点位信息修改成功！")
+                    self.clear_input()
+                    self.load_inspectpoint()
+                else:
+                    self.ui.lab_Note.setText("巡检点位信息修改失败！")
+            else:
+                query = """
+                    INSERT INTO InspectPoint
+                    (AreaId, PointName, PointCode, PointType, Longitude, Latitude, MapX, MapY, YawDeg, Remark, Status)
+                    VALUES
+                    (%s, %s, %s, %s, NULL, NULL, %s, %s, %s, %s, 1)
+                """
+                params = (areaId, pointName, pointCode, pointType, map_x, map_y, yaw_deg, remark)
+                i = self.db.execute_query(query, params)
+                if i > 0:
+                    self.ui.lab_Note.setText("巡检点位信息添加成功！")
+                    self.clear_input()
+                    self.load_inspectpoint()
+                else:
+                    self.ui.lab_Note.setText("巡检点位信息添加失败！")
+        except Exception as exc:
+            self.ui.lab_Note.setText("巡检点位信息保存失败！" + str(exc))
+            return
+
     def on_select(self, index) -> None:
         ins_item = self.ui.tv_InspectPoint.item(index.row(), 0)
         if ins_item is None:
             return
+
         self.pointid = int(ins_item.text())
         records = self.db.fetch_all("SELECT * FROM InspectPoint WHERE PointId = %s", (self.pointid,))
         if not records:
             return
         record = records[0]
-        # 所属机构：匹配时直接通过userData查找
-        for index in range(self.ui.txt_AreaId.count()):
-            if self.ui.txt_AreaId.itemData(index) == record.get("AreaID", ""):
-                self.ui.txt_AreaId.setCurrentIndex(index)
+
+        for idx in range(self.ui.txt_AreaId.count()):
+            if self.ui.txt_AreaId.itemData(idx) == record.get("AreaID", ""):
+                self.ui.txt_AreaId.setCurrentIndex(idx)
                 break
+
+        map_x = record.get("MapX")
+        map_y = record.get("MapY")
+        if map_x is None:
+            map_x = record.get("Longitude", "")
+        if map_y is None:
+            map_y = record.get("Latitude", "")
+
+        self.selected_map_x = float(map_x) if str(map_x).strip() != "" else None
+        self.selected_map_y = float(map_y) if str(map_y).strip() != "" else None
+        self.selected_yaw_deg = float(record.get("YawDeg") or 0.0)
 
         self.ui.txt_PointName.setText(record.get("PointName", ""))
         self.ui.txt_PointCode.setText(record.get("PointCode", ""))
-
         self.ui.txt_PointType.setCurrentIndex(record.get("PointType", 0))
-        self.ui.txt_Longitude.setText(str(record.get("Longitude", "")))
-        self.ui.txt_Latitude.setText(str(record.get("Latitude", "")))
+        self.ui.txt_Longitude.setText("" if map_x is None else str(map_x))
+        self.ui.txt_Latitude.setText("" if map_y is None else str(map_y))
         self.ui.txt_Remark.setText(record.get("Remark", ""))
         self.ui.gbox_status.setTitle("修改巡检点位")
-        self.ui.lab_Note.clear()
-        # 地图定位到该巡检点
-        lng = record.get("Longitude", "")
-        lat = record.get("Latitude", "")
-        #self.web_view.page().runJavaScript(f"map.setCenter([{lng}, {lat}])")
-        self.web_view.page().runJavaScript(f"locatePatrolMarker(1, {lng}, {lat}, '')")
+        self.ui.lab_Note.setText(
+            f"当前点位: x={map_x}, y={map_y}, yaw={self.selected_yaw_deg:.1f}°"
+        )
+        self.ui.lab_Note.setStyleSheet("color: #2f6feb;")
 
-        # 删除巡检点位
     def on_delete(self) -> None:
         selection = self.ui.tv_InspectPoint.selectedItems()
         if not selection:
@@ -592,10 +648,12 @@ class BLL_InspectPoint(QMainWindow):
         self.ui.txt_PointCode.clear()
         self.ui.txt_Latitude.clear()
         self.ui.txt_Longitude.clear()
-        #self.ui.txt_PointType.setCurrentIndex(0)
         self.ui.txt_Remark.clear()
         self.ui.gbox_status.setTitle("新增巡检点位")
         self.pointid = None
+        self.selected_map_x = None
+        self.selected_map_y = None
+        self.selected_yaw_deg = 0.0
 
     def init_map_channel(self):
         """初始化地图通信通道"""
@@ -919,7 +977,58 @@ class BLL_InspectPoint(QMainWindow):
     def on_clear_batch_markers(self):
         """点击按钮：清除批量标注"""
         self.web_view.page().runJavaScript("clearBatchMarkers()")
-# ------------------------------ 以下代码完全不变（地图/通信/界面） ------------------------------
+
+    def _init_ros_goal_bridge(self):
+        try:
+            self._ros_goal_bridge = RosGoalBridge(self)
+            self._ros_goal_bridge.goal_received.connect(self.on_ros_goal_received)
+            self._ros_goal_bridge.start()
+            self.ui.lab_Note.setText("已接入 ROS 录点：请在 RViz 中使用 2D Nav Goal 采集点位。")
+            self.ui.lab_Note.setStyleSheet("color: #2f6feb;")
+        except Exception as exc:
+            print(f"[WARN] ROS goal bridge unavailable: {exc}")
+
+    def on_ros_goal_received(self, map_x: float, map_y: float, yaw_deg: float) -> None:
+        self.selected_map_x = map_x
+        self.selected_map_y = map_y
+        self.selected_yaw_deg = yaw_deg
+        self.ui.txt_Longitude.setText(f"{map_x:.3f}")
+        self.ui.txt_Latitude.setText(f"{map_y:.3f}")
+        self.ui.lab_Note.setText(
+            f"已采集 RViz 点位: x={map_x:.3f}, y={map_y:.3f}, yaw={yaw_deg:.1f}°"
+        )
+        self.ui.lab_Note.setStyleSheet("color: #2f6feb;")
+
+class RosGoalBridge(QObject):
+    goal_received = pyqtSignal(float, float, float)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._sub = None
+        self._euler_from_quaternion = None
+
+    def start(self):
+        import rospy  # type: ignore
+        from geometry_msgs.msg import PoseStamped  # type: ignore
+        from tf.transformations import euler_from_quaternion  # type: ignore
+
+        self._euler_from_quaternion = euler_from_quaternion
+
+        if not rospy.core.is_initialized():
+            rospy.init_node("qt_ui_ros_bridge", anonymous=True, disable_signals=True)
+
+        self._sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self._on_goal)
+
+    def _on_goal(self, msg):
+        q = msg.pose.orientation
+        _, _, yaw = self._euler_from_quaternion([q.x, q.y, q.z, q.w])
+        yaw_deg = math.degrees(yaw)
+        self.goal_received.emit(
+            float(msg.pose.position.x),
+            float(msg.pose.position.y),
+            float(yaw_deg),
+        )
+
 class MapCommunicator(QObject):
     # 定义信号，用于向主窗口传递地图选点经纬度和标记点击事件
     point_selected = pyqtSignal(float, float)
