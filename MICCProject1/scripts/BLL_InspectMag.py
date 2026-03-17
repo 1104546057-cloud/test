@@ -1,4 +1,5 @@
 ﻿import os
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +19,6 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QVBoxLayout,
-    QWidget,
 )
 from qfluentwidgets import PushButton
 
@@ -35,14 +35,19 @@ from MICCProject1.ui.Frm_InspectMag import Ui_Frm_InspectMag
 
 
 class PatrolExecutionWindow(QDialog):
+    RVIZ_CONFIG_PATH = os.getenv(
+        "UAV_RVIZ_CONFIG",
+        str(Path(__file__).resolve().parent.parent / "rviz" / "patrol_map.rviz"),
+    )
+    RVIZ_BIN = os.getenv("UAV_RVIZ_BIN", "rviz")
+
     def __init__(self, owner: "BLL_InspectMag"):
         super().__init__(owner)
         self.owner = owner
         self.setWindowTitle("Patrol Execution Window")
         self.resize(980, 660)
-        self._rviz_available = False
-        self._rviz_frame = None
-        self._rviz_import_error = ""
+        self._rviz_process = None
+        self._rviz_started_by_self = False
         self._build_ui()
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._on_refresh_tick)
@@ -74,14 +79,11 @@ class PatrolExecutionWindow(QDialog):
         self.frmMap = QFrame(self)
         map_layout = QVBoxLayout(self.frmMap)
         map_layout.setContentsMargins(8, 8, 8, 8)
-        self.mapContainer = QWidget(self.frmMap)
-        self.mapContainer.setMinimumHeight(220)
-        self.mapLayout = QVBoxLayout(self.mapContainer)
-        self.mapLayout.setContentsMargins(0, 0, 0, 0)
-        map_layout.addWidget(self.mapContainer)
+        self.lblMap = QLabel("?????? RViz ?????", self.frmMap)
+        self.lblMap.setMinimumHeight(220)
+        self.lblMap.setAlignment(Qt.AlignCenter)
+        map_layout.addWidget(self.lblMap)
         root.addWidget(self.frmMap)
-
-        self._init_rviz_map_widget()
 
         ctrl = QHBoxLayout()
         self.btnStart = PushButton("Start", self)
@@ -128,8 +130,7 @@ class PatrolExecutionWindow(QDialog):
         self.btnEmergency.clicked.connect(self.owner._emergency_stop)
         self.cmbRefreshRate.currentIndexChanged.connect(self._on_rate_changed)
 
-        if self._rviz_import_error:
-            self._emit_log(self._rviz_import_error)
+        self._launch_external_rviz()
 
     def _emit_log(self, message: str) -> None:
         if hasattr(self, "txtLog"):
@@ -140,54 +141,28 @@ class PatrolExecutionWindow(QDialog):
             except Exception:
                 pass
 
-    def _init_rviz_map_widget(self) -> None:
+    def _launch_external_rviz(self) -> None:
+        if self._rviz_process is not None and self._rviz_process.poll() is None:
+            return
+
+        config_path = Path(self.RVIZ_CONFIG_PATH).expanduser()
+        cmd = [self.RVIZ_BIN]
+        if config_path.exists():
+            cmd.extend(["-d", str(config_path)])
+
         try:
-            import rviz
-
-            self._rviz_available = True
-            self._rviz_frame = rviz.VisualizationFrame()
-            self._rviz_frame.setSplashPath("")
-            self._rviz_frame.initialize()
-            self._rviz_frame.setMenuBar(None)
-            self._rviz_frame.setStatusBar(None)
-            self._rviz_frame.setHideButtonVisibility(False)
-            self.mapLayout.addWidget(self._rviz_frame)
-            self._setup_rviz_displays()
+            self._rviz_process = subprocess.Popen(cmd)
+            self._rviz_started_by_self = True
+            if config_path.exists():
+                self._emit_log(f"RViz ????????: {config_path}")
+            else:
+                self._emit_log(f"??? RViz ?????????: {config_path}")
+            self.lblMap.setText("?????? RViz ?????")
         except Exception as exc:
-            self._rviz_available = False
-            self._rviz_import_error = f"RViz unavailable: {exc}"
-            fallback = QLabel("RViz unavailable", self.mapContainer)
-            fallback.setMinimumHeight(220)
-            fallback.setAlignment(Qt.AlignCenter)
-            self.mapLayout.addWidget(fallback)
-
-    def _setup_rviz_displays(self) -> None:
-        if not self._rviz_frame:
-            return
-
-        manager = self._rviz_frame.getManager()
-        if manager is None:
-            self._rviz_import_error = "RViz init failed: missing VisualizationManager"
-            self._emit_log(self._rviz_import_error)
-            return
-
-        def _create(display_type: str, name: str, topic: str = "") -> None:
-            display = manager.createDisplay(display_type, name, True)
-            if display is None:
-                self._emit_log(f"RViz create display failed: {display_type}")
-                return
-            if topic:
-                try:
-                    display.subProp("Topic").setValue(topic)
-                except Exception:
-                    self._emit_log(f"RViz set topic failed: {name} -> {topic}")
-
-        _create("rviz/Grid", "Grid")
-        _create("rviz/Map", "Map", "/map")
-        _create("rviz/TF", "TF")
-        _create("rviz/RobotModel", "RobotModel")
-        _create("rviz/Path", "GlobalPlan", "/move_base/GlobalPlanner/plan")
-        _create("rviz/Path", "LocalPlan", "/move_base/TebLocalPlannerROS/local_plan")
+            self._rviz_process = None
+            self._rviz_started_by_self = False
+            self.lblMap.setText("?? RViz ???????? ROS ??")
+            self._emit_log(f"?? RViz ??: {exc}")
 
     def _on_rate_changed(self, _idx: int) -> None:
         interval = int(self.cmbRefreshRate.currentData() or 5000)
@@ -234,6 +209,25 @@ class PatrolExecutionWindow(QDialog):
             if ans != QMessageBox.Yes:
                 event.ignore()
                 return
+
+        if self._rviz_started_by_self and self._rviz_process is not None and self._rviz_process.poll() is None:
+            close_rviz = QMessageBox.question(
+                self,
+                "Prompt",
+                "???????? RViz ???",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if close_rviz == QMessageBox.Yes:
+                try:
+                    self._rviz_process.terminate()
+                    self._rviz_process.wait(timeout=3)
+                except Exception:
+                    try:
+                        self._rviz_process.kill()
+                    except Exception:
+                        pass
+
         super().closeEvent(event)
 
 
