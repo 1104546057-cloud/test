@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QVBoxLayout,
+    QWidget,
 )
 from qfluentwidgets import PushButton
 
@@ -37,8 +38,11 @@ class PatrolExecutionWindow(QDialog):
     def __init__(self, owner: "BLL_InspectMag"):
         super().__init__(owner)
         self.owner = owner
-        self.setWindowTitle("巡逻执行窗口")
+        self.setWindowTitle("Patrol Execution Window")
         self.resize(980, 660)
+        self._rviz_available = False
+        self._rviz_frame = None
+        self._rviz_import_error = ""
         self._build_ui()
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._on_refresh_tick)
@@ -49,54 +53,57 @@ class PatrolExecutionWindow(QDialog):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(8)
 
-        self.lblTitle = QLabel("巡检执行总览", self)
+        self.lblTitle = QLabel("Patrol Summary", self)
         self.lblTitle.setAlignment(Qt.AlignCenter)
         root.addWidget(self.lblTitle)
 
         self.grpMeta = QFrame(self)
         meta_layout = QGridLayout(self.grpMeta)
         meta_layout.setContentsMargins(8, 8, 8, 8)
-        meta_layout.addWidget(QLabel("当前区域"), 0, 0)
+        meta_layout.addWidget(QLabel("Area"), 0, 0)
         self.lblArea = QLabel("-", self.grpMeta)
         meta_layout.addWidget(self.lblArea, 0, 1)
-        meta_layout.addWidget(QLabel("当前路线"), 1, 0)
+        meta_layout.addWidget(QLabel("Route"), 1, 0)
         self.lblRoute = QLabel("-", self.grpMeta)
         meta_layout.addWidget(self.lblRoute, 1, 1)
         root.addWidget(self.grpMeta)
 
-        self.lblCurrent = QLabel("执行中: -", self)
+        self.lblCurrent = QLabel("Running: -", self)
         root.addWidget(self.lblCurrent)
 
         self.frmMap = QFrame(self)
         map_layout = QVBoxLayout(self.frmMap)
         map_layout.setContentsMargins(8, 8, 8, 8)
-        self.lblMap = QLabel("导航实时地图(预留): 等待刷新", self.frmMap)
-        self.lblMap.setMinimumHeight(220)
-        self.lblMap.setAlignment(Qt.AlignCenter)
-        map_layout.addWidget(self.lblMap)
+        self.mapContainer = QWidget(self.frmMap)
+        self.mapContainer.setMinimumHeight(220)
+        self.mapLayout = QVBoxLayout(self.mapContainer)
+        self.mapLayout.setContentsMargins(0, 0, 0, 0)
+        map_layout.addWidget(self.mapContainer)
         root.addWidget(self.frmMap)
 
+        self._init_rviz_map_widget()
+
         ctrl = QHBoxLayout()
-        self.btnStart = PushButton("开始巡逻", self)
-        self.btnPause = PushButton("暂停", self)
-        self.btnResume = PushButton("恢复", self)
-        self.btnStop = PushButton("停止", self)
-        self.btnEmergency = PushButton("紧急制动", self)
+        self.btnStart = PushButton("Start", self)
+        self.btnPause = PushButton("Pause", self)
+        self.btnResume = PushButton("Resume", self)
+        self.btnStop = PushButton("Stop", self)
+        self.btnEmergency = PushButton("Emergency", self)
         self.cmbRefreshRate = QComboBox(self)
-        self.cmbRefreshRate.addItem("1秒", userData=1000)
-        self.cmbRefreshRate.addItem("2秒", userData=2000)
-        self.cmbRefreshRate.addItem("5秒", userData=5000)
-        self.cmbRefreshRate.addItem("10秒", userData=10000)
+        self.cmbRefreshRate.addItem("1s", userData=1000)
+        self.cmbRefreshRate.addItem("2s", userData=2000)
+        self.cmbRefreshRate.addItem("5s", userData=5000)
+        self.cmbRefreshRate.addItem("10s", userData=10000)
         self.cmbRefreshRate.setCurrentIndex(2)
 
         for b in (self.btnStart, self.btnPause, self.btnResume, self.btnStop, self.btnEmergency):
             b.setMinimumHeight(34)
             ctrl.addWidget(b)
-        ctrl.addWidget(QLabel("刷新率", self))
+        ctrl.addWidget(QLabel("Refresh", self))
         ctrl.addWidget(self.cmbRefreshRate)
         root.addLayout(ctrl)
 
-        self.lblState = QLabel("状态: IDLE", self)
+        self.lblState = QLabel("State: IDLE", self)
         root.addWidget(self.lblState)
 
         self.progress = QProgressBar(self)
@@ -121,6 +128,67 @@ class PatrolExecutionWindow(QDialog):
         self.btnEmergency.clicked.connect(self.owner._emergency_stop)
         self.cmbRefreshRate.currentIndexChanged.connect(self._on_rate_changed)
 
+        if self._rviz_import_error:
+            self._emit_log(self._rviz_import_error)
+
+    def _emit_log(self, message: str) -> None:
+        if hasattr(self, "txtLog"):
+            self.txtLog.appendPlainText(message)
+        if self.owner is not None:
+            try:
+                self.owner._append_runtime_log(message)
+            except Exception:
+                pass
+
+    def _init_rviz_map_widget(self) -> None:
+        try:
+            import rviz
+
+            self._rviz_available = True
+            self._rviz_frame = rviz.VisualizationFrame()
+            self._rviz_frame.setSplashPath("")
+            self._rviz_frame.initialize()
+            self._rviz_frame.setMenuBar(None)
+            self._rviz_frame.setStatusBar(None)
+            self._rviz_frame.setHideButtonVisibility(False)
+            self.mapLayout.addWidget(self._rviz_frame)
+            self._setup_rviz_displays()
+        except Exception as exc:
+            self._rviz_available = False
+            self._rviz_import_error = f"RViz unavailable: {exc}"
+            fallback = QLabel("RViz unavailable", self.mapContainer)
+            fallback.setMinimumHeight(220)
+            fallback.setAlignment(Qt.AlignCenter)
+            self.mapLayout.addWidget(fallback)
+
+    def _setup_rviz_displays(self) -> None:
+        if not self._rviz_frame:
+            return
+
+        manager = self._rviz_frame.getManager()
+        if manager is None:
+            self._rviz_import_error = "RViz init failed: missing VisualizationManager"
+            self._emit_log(self._rviz_import_error)
+            return
+
+        def _create(display_type: str, name: str, topic: str = "") -> None:
+            display = manager.createDisplay(display_type, name, True)
+            if display is None:
+                self._emit_log(f"RViz create display failed: {display_type}")
+                return
+            if topic:
+                try:
+                    display.subProp("Topic").setValue(topic)
+                except Exception:
+                    self._emit_log(f"RViz set topic failed: {name} -> {topic}")
+
+        _create("rviz/Grid", "Grid")
+        _create("rviz/Map", "Map", "/map")
+        _create("rviz/TF", "TF")
+        _create("rviz/RobotModel", "RobotModel")
+        _create("rviz/Path", "GlobalPlan", "/move_base/GlobalPlanner/plan")
+        _create("rviz/Path", "LocalPlan", "/move_base/TebLocalPlannerROS/local_plan")
+
     def _on_rate_changed(self, _idx: int) -> None:
         interval = int(self.cmbRefreshRate.currentData() or 5000)
         self._refresh_timer.setInterval(interval)
@@ -129,7 +197,7 @@ class PatrolExecutionWindow(QDialog):
 
     def _on_refresh_tick(self) -> None:
         now = datetime.now().strftime("%H:%M:%S")
-        self.lblMap.setText(f"导航实时地图(预留)\n最近刷新: {now}")
+        self.lblCurrent.setToolTip(f"Last refresh: {now}")
 
     def start_refresh(self) -> None:
         if not self._refresh_timer.isActive():
@@ -144,12 +212,12 @@ class PatrolExecutionWindow(QDialog):
         self.lblRoute.setText(route_name or "-")
 
     def set_state(self, state: str) -> None:
-        self.lblState.setText(f"状态: {state}")
+        self.lblState.setText(f"State: {state}")
 
     def set_progress(self, current: int, total: int, point_name: str) -> None:
         pct = int((current / total) * 100) if total else 0
         self.progress.setValue(pct)
-        self.lblCurrent.setText(f"执行中: 点位 {current}/{total} - {point_name}")
+        self.lblCurrent.setText(f"Running: point {current}/{total} - {point_name}")
 
     def append_log(self, msg: str) -> None:
         self.txtLog.appendPlainText(msg)
@@ -158,8 +226,8 @@ class PatrolExecutionWindow(QDialog):
         if self.owner and self.owner._executor.state == PatrolState.RUNNING:
             ans = QMessageBox.question(
                 self,
-                "提示",
-                "巡逻仍在执行中，关闭窗口不会停止任务。是否仅关闭此窗体？",
+                "Prompt",
+                "Patrol is still running. Close this window only?",
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.No,
             )
