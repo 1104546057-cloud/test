@@ -940,39 +940,51 @@ class BLL_InspectPoint(QMainWindow):
             QMessageBox.warning(self, "失败", message)
 
     def on_show_batch_markers(self):
-
-        # ========== 示例：你的位置列表（可从数据库/文件读取） ==========
-        # 格式：每个元素包含lng（经度）、lat（纬度）、name（名称）
-        # position_list = [
-        #     {"lng": "113.589038", "lat": "22.347812", "name": "中山大学珠海校区-图书馆"},
-        #     {"lng": "113.590123", "lat": "22.348945", "name": "中山大学珠海校区-教学楼"},
-        #     {"lng": "113.587890", "lat": "22.346789", "name": "中山大学珠海校区-食堂"},
-        #     {"lng": "113.591234", "lat": "22.349876", "name": "中山大学珠海校区-宿舍区"}
-        # ]
         area_id = self.ui.txt_AreaId.currentData()
         if area_id is None:
             QMessageBox.information(self, "提示", "当前没有可用的巡检区域。")
             return
 
-        position_list=[]
         recordlist = self.db.fetch_all(
-            "SELECT * FROM InspectPoint WHERE AreaID=%s",
+            """
+            SELECT PointName, Longitude, Latitude, MapX, MapY
+            FROM InspectPoint
+            WHERE AreaID=%s
+            """,
             (area_id,),
         )
-        for row, record in enumerate(recordlist):
-            position = {
-            "lng": str(record.get("Longitude", "")),  # 转为字符串，兼容数字/字符串类型
-            "lat": str(record.get("Latitude", "")),
-            "name": record.get("PointName", f"未知位置{len(position_list) + 1}")
-            }
-            # 过滤无效数据（经纬度为空的跳过）
-            if position["lng"] and position["lat"]:
-                position_list.append(position)
 
-        # 1. 将Python列表转为JSON字符串（JS能解析）
-        position_json = json.dumps(position_list, ensure_ascii=False)
-        # 2. 调用JS的showBatchMarkers函数
-        self.web_view.page().runJavaScript(f"showBatchMarkers({position_json})")
+        position_list = []
+        has_ros_points = False
+
+        for record in recordlist:
+            lng = record.get("Longitude")
+            lat = record.get("Latitude")
+            map_x = record.get("MapX")
+            map_y = record.get("MapY")
+
+            if lng is not None and lat is not None:
+                position_list.append({
+                    "lng": str(lng),
+                    "lat": str(lat),
+                    "name": record.get("PointName", "未命名点位")
+                })
+            elif map_x is not None and map_y is not None:
+                has_ros_points = True
+
+        if position_list:
+            position_json = json.dumps(position_list, ensure_ascii=False)
+            self.web_view.page().runJavaScript(f"showBatchMarkers({position_json})")
+            return
+
+        if has_ros_points:
+            QMessageBox.information(
+                self,
+                "提示",
+                "当前区域点位使用的是 ROS 地图坐标(MapX/MapY)，不能直接在高德地图显示，请在 RViz 中查看。"
+            )
+        else:
+            QMessageBox.information(self, "提示", "当前区域还没有可显示的点位。")
 
     def on_clear_batch_markers(self):
         """点击按钮：清除批量标注"""
