@@ -1,15 +1,31 @@
-﻿import math
+import os
+import re
 import sys
+import math
+import threading
 from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QMessageBox
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtWidgets import QApplication, QTableWidgetItem, QMessageBox, QLineEdit
+from PyQt5.QtGui import QIcon, QPixmap, QImage
 from MICCProject1.ui.Frm_InspectPoint import Ui_Frm_InspectPoint  # 导入自动生成的界面类
 from MICCProject1.scripts.DBHelper import DBHelper
 # 以下用于显示地图
-from PyQt5.QtCore import QObject, pyqtSlot, QUrl, pyqtSignal, QEasingCurve, QPropertyAnimation, QCoreApplication, Qt
+from PyQt5.QtCore import (
+    QObject,
+    pyqtSlot,
+    QUrl,
+    pyqtSignal,
+    QEasingCurve,
+    QPropertyAnimation,
+    QCoreApplication,
+    QTimer,
+    Qt,
+    QByteArray,
+    QBuffer,
+    QIODevice,
+)
 from PyQt5.QtWebChannel import QWebChannel
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QMainWindow, QSizePolicy, QVBoxLayout, QSplitter, QWidget, QHBoxLayout, QLabel, QFrame, \
@@ -30,24 +46,26 @@ class BLL_InspectPoint(QMainWindow):
         self._on_jump = on_jump
         self._active_step = 1
         self.pointid = None
-        self.init_ui()
-        self.load_inspectpoint() #加载巡检点位
-        self.load_inspectarea() # 加载巡检区域
 
-        # 兼容旧字段名，但室内模式下这里实际承载的是 map_x / map_y
+        # 地图模式与坐标缓存
+        self._map_mode = "amap"  # grid | amap
+        self._map_meta = None
+        self._map_yaml_path = None
         self.selected_lng = None
         self.selected_lat = None
         self.selected_map_x = None
         self.selected_map_y = None
         self.selected_yaw_deg = 0.0
         self.current_point_id = None
+        self._ros_pose_bridge = None
+        self._pose_timer = None
+        self._last_robot_pose_sig = None
 
-        # 初始化地图通信（旧高德地图保留，不作为室内录点主入口）
+        self.init_ui()
+        # 初始化地图通信（优先本地栅格地图）
         self.init_map_channel()
-
-        # 新增：接入 ROS，支持从 RViz 的 /move_base_simple/goal 录点
-        self._ros_goal_bridge = None
-        self._init_ros_goal_bridge()
+        self.load_inspectpoint() #加载巡检点位
+        self.load_inspectarea() # 加载巡检区域
 
         #self.setFixedSize(1639, 636)
 
@@ -55,6 +73,7 @@ class BLL_InspectPoint(QMainWindow):
         self._apply_window_icon()
         self._apply_form_style()
         self._replace_top_controls()
+        self._inject_yaw_input()
         self.ui.btn_Save.clicked.connect(self.on_save)
         self.ui.btn_Clear.clicked.connect(self.on_clear)
         self.ui.btn_Delete.clicked.connect(self.on_delete)
@@ -85,6 +104,30 @@ class BLL_InspectPoint(QMainWindow):
         # Remove step controls (区域->点位->路线 + arrows/close) per latest UI request.
         # Keep business flow callbacks, but no longer render this nav bar.
         # self._init_nav()
+
+    def _inject_yaw_input(self) -> None:
+        host = getattr(self.ui, "gbox_status", None)
+        if host is None:
+            return
+
+        if hasattr(self.ui, "label_9"):
+            self.ui.label_9.setText("朝向(°)：")
+
+        self.txt_YawDeg = QLineEdit(host)
+        self.txt_YawDeg.setObjectName("txt_YawDeg")
+        self.txt_YawDeg.setGeometry(70, 224, 120, 30)
+        self.txt_YawDeg.setPlaceholderText("例如: 90")
+
+        self.lbl_YawReq = QLabel("(*)", host)
+        self.lbl_YawReq.setObjectName("lbl_YawReq")
+        self.lbl_YawReq.setGeometry(190, 231, 16, 16)
+        self.lbl_YawReq.setStyleSheet("color: rgb(255, 0, 0);")
+
+        if hasattr(self.ui, "txt_Remark"):
+            self.ui.txt_Remark.setGeometry(200, 224, 191, 61)
+        self.lbl_RemarkEx = QLabel("备注：", host)
+        self.lbl_RemarkEx.setObjectName("lbl_RemarkEx")
+        self.lbl_RemarkEx.setGeometry(200, 198, 61, 24)
 
     def _init_nav(self) -> None:
         self._nav_bar = QWidget(self)
@@ -241,29 +284,27 @@ class BLL_InspectPoint(QMainWindow):
 
     def load_inspectpoint(self) -> None:
         self.ui.tv_InspectPoint.setRowCount(0)
-        recordlist = self.db.fetch_all(
-            "select *, ia.AreaName from InspectArea ia, InspectPoint ip where ip.AreaID = ia.AreaID"
-        )
+        if self._is_grid_mode():
+            self.ui.tv_InspectPoint.horizontalHeaderItem(3).setText("MapX")
+            self.ui.tv_InspectPoint.horizontalHeaderItem(4).setText("MapY")
+        else:
+            self.ui.tv_InspectPoint.horizontalHeaderItem(3).setText("经度")
+            self.ui.tv_InspectPoint.horizontalHeaderItem(4).setText("纬度")
+
+        recordlist = self.db.fetch_all("select *, ia.AreaName from InspectArea ia, InspectPoint ip where ip.AreaID = ia.AreaID")
         for row, record in enumerate(recordlist):
             self.ui.tv_InspectPoint.insertRow(row)
-
-            map_x = record.get("MapX")
-            map_y = record.get("MapY")
-            if map_x is None:
-                map_x = record.get("Longitude", "")
-            if map_y is None:
-                map_y = record.get("Latitude", "")
-
-            self.ui.tv_InspectPoint.setItem(row, 0, QTableWidgetItem(str(record.get("PointId", ""))))
-            self.ui.tv_InspectPoint.setItem(row, 1, QTableWidgetItem(str(record.get("PointName", ""))))
-            self.ui.tv_InspectPoint.setItem(row, 2, QTableWidgetItem(str(record.get("AreaName", ""))))
-            self.ui.tv_InspectPoint.setItem(row, 3, QTableWidgetItem(str(map_x)))
-            self.ui.tv_InspectPoint.setItem(row, 4, QTableWidgetItem(str(map_y)))
-            self.ui.tv_InspectPoint.setItem(
-                row, 5, QTableWidgetItem("启用" if record.get("Status") == 1 else "禁用")
-            )
+            x_val = record.get("MapX") if record.get("MapX") is not None else record.get("Longitude", "")
+            y_val = record.get("MapY") if record.get("MapY") is not None else record.get("Latitude", "")
+            self.ui.tv_InspectPoint.setItem(row, 0, QTableWidgetItem(str(record.get("PointId", ""))))  # 巡检点位ID
+            self.ui.tv_InspectPoint.setItem(row, 1, QTableWidgetItem(str(record.get("PointName", ""))))  #点位名称
+            self.ui.tv_InspectPoint.setItem(row, 2, QTableWidgetItem(str(record.get("AreaName", ""))))   #区域名称
+            self.ui.tv_InspectPoint.setItem(row, 3, QTableWidgetItem(str(x_val)))
+            self.ui.tv_InspectPoint.setItem(row, 4, QTableWidgetItem(str(y_val)))
+            self.ui.tv_InspectPoint.setItem(row, 5, QTableWidgetItem("启用" if record.get("Status") == 1 else "禁用" )) #状态
 
         self.setup_table_view()
+
 
     def load_inspectarea(self):
         self.ui.txt_AreaId.clear()
@@ -276,6 +317,636 @@ class BLL_InspectPoint(QMainWindow):
             areaname = record['AreaName']  # 通过键'AreaName'取对应值
             self.ui.txt_AreaId.addItem(areaname,userData=areaid)
 
+    def _is_grid_mode(self) -> bool:
+        return self._map_mode == "grid"
+
+    def _set_coordinate_labels(self) -> None:
+        if self._is_grid_mode():
+            self.ui.label_10.setText("Map X：")
+            self.ui.label_11.setText("Map Y：")
+            self.ui.txt_MapAddress.setPlaceholderText("当前使用本地栅格地图，地址搜索已禁用")
+            self.ui.btn_Search.setText("地址搜索(AMap)")
+        else:
+            self.ui.label_10.setText("经度：")
+            self.ui.label_11.setText("纬度：")
+            self.ui.txt_MapAddress.setPlaceholderText("请输入地址（如：北京市朝阳区天安门）")
+            self.ui.btn_Search.setText("搜索地址并定位")
+
+    def _candidate_map_yamls(self):
+        candidates = []
+        env_yaml = os.getenv("UAV_MAP_YAML", "").strip()
+        if env_yaml:
+            candidates.append(Path(env_yaml).expanduser())
+        candidates.extend(
+            [
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_test_map.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+            ]
+        )
+
+        existing = [p for p in candidates if p.exists()]
+        existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return existing
+
+    def _parse_map_yaml(self, yaml_path: Path):
+        content = yaml_path.read_text(encoding="utf-8", errors="ignore")
+        image_value = None
+        resolution = None
+        origin = None
+
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("image:"):
+                image_value = line.split(":", 1)[1].strip().strip("\"'")
+            elif line.startswith("resolution:"):
+                resolution = float(line.split(":", 1)[1].strip())
+            elif line.startswith("origin:"):
+                match = re.search(r"\[([^\]]+)\]", line)
+                if match:
+                    parts = [p.strip() for p in match.group(1).split(",")]
+                    if len(parts) >= 2:
+                        origin = (float(parts[0]), float(parts[1]), float(parts[2]) if len(parts) >= 3 else 0.0)
+
+        if not image_value or resolution is None or origin is None:
+            raise ValueError(f"地图yaml缺少关键字段: {yaml_path}")
+
+        image_path = Path(image_value)
+        if not image_path.is_absolute():
+            image_path = (yaml_path.parent / image_path).resolve()
+
+        if not image_path.exists():
+            local_fallback = (yaml_path.parent / Path(image_value).name).resolve()
+            if local_fallback.exists():
+                image_path = local_fallback
+
+        if not image_path.exists():
+            raise FileNotFoundError(f"地图图片不存在: {image_path}")
+
+        qimg = QImage(str(image_path))
+        if qimg.isNull():
+            raise ValueError(f"无法读取地图图片: {image_path}")
+
+        # QtWebEngine 对 PGM 支持不稳定，统一转成 PNG data URL 再给前端渲染。
+        png_bytes = QByteArray()
+        buffer = QBuffer(png_bytes)
+        if not buffer.open(QIODevice.WriteOnly):
+            raise ValueError("无法打开内存缓冲区用于地图编码。")
+        if not qimg.save(buffer, "PNG"):
+            buffer.close()
+            raise ValueError("地图图片转 PNG 失败。")
+        buffer.close()
+        image_data_url = "data:image/png;base64," + bytes(png_bytes.toBase64()).decode("ascii")
+
+        return {
+            "yaml_path": str(yaml_path),
+            "image_path": str(image_path),
+            "image_url": Path(image_path).as_uri(),
+            "image_data_url": image_data_url,
+            "resolution": float(resolution),
+            "origin_x": float(origin[0]),
+            "origin_y": float(origin[1]),
+            "origin_yaw": float(origin[2]),
+            "width": int(qimg.width()),
+            "height": int(qimg.height()),
+        }
+
+    def _load_grid_map_html(self, meta: dict) -> None:
+        self._map_meta = meta
+        map_name = Path(meta.get("yaml_path", "")).name
+        image_url = meta.get("image_data_url") or meta["image_url"]
+        html = f"""
+        <!DOCTYPE html>
+        <html lang="zh-CN">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; background: #0e1621; color: #e6edf6; overflow: hidden; }}
+                #root {{ width: 100%; height: 100%; display: flex; flex-direction: column; }}
+                #meta {{
+                    padding: 8px 10px;
+                    font: 12px 'Microsoft YaHei';
+                    background: #142235;
+                    border-bottom: 1px solid #29435e;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 10px;
+                }}
+                #metaText {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+                #metaStatus {{ color: #8fb8dc; white-space: nowrap; }}
+                #wrap {{ flex: 1; position: relative; }}
+                #canvas {{ position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; }}
+                #toolbar {{
+                    position: absolute;
+                    right: 12px;
+                    top: 12px;
+                    z-index: 3;
+                    display: flex;
+                    gap: 8px;
+                    align-items: center;
+                    background: rgba(10, 22, 35, 0.72);
+                    border: 1px solid rgba(127, 174, 214, 0.35);
+                    border-radius: 8px;
+                    padding: 6px 8px;
+                }}
+                #toolbar button {{
+                    min-width: 34px;
+                    height: 26px;
+                    border: 1px solid #4a6f93;
+                    border-radius: 5px;
+                    background: #16304a;
+                    color: #dcefff;
+                    font: 12px 'Microsoft YaHei';
+                    cursor: pointer;
+                }}
+                #toolbar button:hover {{ background: #204566; }}
+                #hint {{ color: #9db9d4; font: 11px 'Microsoft YaHei'; }}
+            </style>
+            <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+        </head>
+        <body>
+            <div id="root">
+                <div id="meta">
+                    <div id="metaText">??: {map_name} | ???: {meta['resolution']} m/px | ??: ({meta['origin_x']:.3f}, {meta['origin_y']:.3f})</div>
+                    <div id="metaStatus">??: 1.00x</div>
+                </div>
+                <div id="wrap">
+                    <canvas id="canvas"></canvas>
+                    <div id="toolbar">
+                        <button id="btnPoseMode" title="朝向拖拽模式">Yaw:关</button>
+                        <button id="btnFit" title="????">??</button>
+                        <button id="btnZoomIn" title="??">+</button>
+                        <button id="btnZoomOut" title="??">-</button>
+                        <span id="hint">左键平移；开Yaw后拖拽箭头</span>
+                    </div>
+                </div>
+            </div>
+            <script>
+                const meta = {{
+                    width: {meta['width']},
+                    height: {meta['height']},
+                    resolution: {meta['resolution']},
+                    originX: {meta['origin_x']},
+                    originY: {meta['origin_y']}
+                }};
+                let pythonObj = null;
+                new QWebChannel(qt.webChannelTransport, function(channel) {{
+                    pythonObj = channel.objects.pythonObj;
+                }});
+
+                const canvas = document.getElementById('canvas');
+                const ctx = canvas.getContext('2d');
+                const statusEl = document.getElementById('metaStatus');
+                const btnPoseMode = document.getElementById('btnPoseMode');
+                const btnFit = document.getElementById('btnFit');
+                const btnZoomIn = document.getElementById('btnZoomIn');
+                const btnZoomOut = document.getElementById('btnZoomOut');
+                const img = new Image();
+                img.src = '{image_url}';
+                img.onerror = function() {{
+                    console.error('grid map image load failed', img.src);
+                }};
+
+                let points = [];
+                let selected = null;
+                let robotPose = null;
+                let poseMode = false;
+                const yawDrag = {{ active: false, yawDeg: 0 }};
+                const view = {{ scale: 1, offsetX: 0, offsetY: 0 }};
+                const drag = {{ active: false, moved: false, startX: 0, startY: 0, originOffsetX: 0, originOffsetY: 0 }};
+                let inited = false;
+
+                function mapToPixel(mapX, mapY) {{
+                    const px = (mapX - meta.originX) / meta.resolution;
+                    const py = meta.height - 1 - ((mapY - meta.originY) / meta.resolution);
+                    return {{px, py}};
+                }}
+
+                function pixelToMap(px, py) {{
+                    const mapX = meta.originX + px * meta.resolution;
+                    const mapY = meta.originY + (meta.height - 1 - py) * meta.resolution;
+                    return {{mapX, mapY}};
+                }}
+
+                function fitScale() {{
+                    if (!canvas.width || !canvas.height) return 1;
+                    return Math.min(canvas.width / meta.width, canvas.height / meta.height);
+                }}
+
+                function fitView() {{
+                    const s = fitScale();
+                    view.scale = s;
+                    view.offsetX = (canvas.width - meta.width * s) / 2;
+                    view.offsetY = (canvas.height - meta.height * s) / 2;
+                }}
+
+                function worldToScreen(px, py) {{
+                    return {{ x: view.offsetX + px * view.scale, y: view.offsetY + py * view.scale }};
+                }}
+
+                function screenToWorld(x, y) {{
+                    return {{ px: (x - view.offsetX) / view.scale, py: (y - view.offsetY) / view.scale }};
+                }}
+
+                function mapToScreen(mapX, mapY) {{
+                    const pix = mapToPixel(mapX, mapY);
+                    return worldToScreen(pix.px, pix.py);
+                }}
+
+                function screenToMap(x, y) {{
+                    const w = screenToWorld(x, y);
+                    if (w.px < 0 || w.py < 0 || w.px > meta.width || w.py > meta.height) {{
+                        return null;
+                    }}
+                    return pixelToMap(w.px, w.py);
+                }}
+
+                function normalizeYawDeg(yawDeg) {{
+                    let yaw = Number(yawDeg) || 0;
+                    while (yaw > 180) yaw -= 360;
+                    while (yaw <= -180) yaw += 360;
+                    return yaw;
+                }}
+
+                function yawDegToScreenRad(yawDeg) {{
+                    return -normalizeYawDeg(yawDeg) * Math.PI / 180.0;
+                }}
+
+                function computeYawDegFromClient(clientX, clientY) {{
+                    if (!selected) return 0;
+                    const rect = canvas.getBoundingClientRect();
+                    const px = clientX - rect.left;
+                    const py = clientY - rect.top;
+                    const anchor = mapToScreen(selected.x, selected.y);
+                    const dx = px - anchor.x;
+                    const dy = py - anchor.y;
+                    if ((dx * dx + dy * dy) < 9) {{
+                        return normalizeYawDeg(selected.yawDeg || 0);
+                    }}
+                    return normalizeYawDeg(Math.atan2(-dy, dx) * 180.0 / Math.PI);
+                }}
+
+                function drawYawArrow(mapX, mapY, yawDeg, color) {{
+                    const p = mapToScreen(mapX, mapY);
+                    const rad = yawDegToScreenRad(yawDeg);
+                    const len = 46;
+                    const tx = p.x + Math.cos(rad) * len;
+                    const ty = p.y + Math.sin(rad) * len;
+                    ctx.strokeStyle = color || '#ff6b6b';
+                    ctx.lineWidth = 2.2;
+                    ctx.beginPath();
+                    ctx.moveTo(p.x, p.y);
+                    ctx.lineTo(tx, ty);
+                    ctx.stroke();
+                    ctx.fillStyle = color || '#ff6b6b';
+                    const ah = 10;
+                    const aw = 6;
+                    const bx = tx - Math.cos(rad) * ah;
+                    const by = ty - Math.sin(rad) * ah;
+                    const lx = bx + Math.cos(rad + Math.PI / 2) * aw;
+                    const ly = by + Math.sin(rad + Math.PI / 2) * aw;
+                    const rx = bx + Math.cos(rad - Math.PI / 2) * aw;
+                    const ry = by + Math.sin(rad - Math.PI / 2) * aw;
+                    ctx.beginPath();
+                    ctx.moveTo(tx, ty);
+                    ctx.lineTo(lx, ly);
+                    ctx.lineTo(rx, ry);
+                    ctx.closePath();
+                    ctx.fill();
+                }}
+
+                function refreshStatus() {{
+                    const ratio = view.scale / Math.max(fitScale(), 1e-6);
+                    let text = '??: ' + ratio.toFixed(2) + 'x';
+                    text += ' | Yaw拖拽:' + (poseMode ? '开' : '关');
+                    if (selected && Number.isFinite(selected.yawDeg)) {{
+                        text += ' | 朝向: ' + normalizeYawDeg(selected.yawDeg).toFixed(1) + '°';
+                    }}
+                    if (robotPose) {{
+                        text += ' | ??: (' + robotPose.x.toFixed(2) + ', ' + robotPose.y.toFixed(2) + ')';
+                    }}
+                    statusEl.textContent = text;
+                }}
+
+                function resizeCanvas() {{
+                    let centerMap = null;
+                    if (inited && canvas.width > 0 && canvas.height > 0) {{
+                        centerMap = screenToMap(canvas.width / 2, canvas.height / 2);
+                    }}
+
+                    canvas.width = canvas.clientWidth;
+                    canvas.height = canvas.clientHeight;
+
+                    if (!inited) {{
+                        fitView();
+                        inited = true;
+                    }} else if (centerMap) {{
+                        const centerPix = mapToPixel(centerMap.mapX, centerMap.mapY);
+                        view.offsetX = canvas.width / 2 - centerPix.px * view.scale;
+                        view.offsetY = canvas.height / 2 - centerPix.py * view.scale;
+                    }}
+                    draw();
+                }}
+
+                function zoomAt(cx, cy, factor) {{
+                    const prev = view.scale;
+                    const baseFit = fitScale();
+                    const minScale = Math.max(baseFit * 0.35, 0.05);
+                    const maxScale = baseFit * 30.0;
+                    let next = prev * factor;
+                    next = Math.max(minScale, Math.min(maxScale, next));
+                    if (Math.abs(next - prev) < 1e-8) return;
+
+                    const world = screenToWorld(cx, cy);
+                    view.scale = next;
+                    view.offsetX = cx - world.px * next;
+                    view.offsetY = cy - world.py * next;
+                    draw();
+                }}
+
+                function drawPoint(mapX, mapY, color, label) {{
+                    const p = mapToScreen(mapX, mapY);
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+                    ctx.fill();
+                    if (label) {{
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = "12px 'Microsoft YaHei'";
+                        ctx.fillText(label, p.x + 8, p.y - 8);
+                    }}
+                }}
+
+                function drawPath() {{
+                    if (points.length < 2) return;
+                    ctx.strokeStyle = '#2f93ff';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    points.forEach((p, idx) => {{
+                        const s = mapToScreen(p.x, p.y);
+                        if (idx === 0) ctx.moveTo(s.x, s.y);
+                        else ctx.lineTo(s.x, s.y);
+                    }});
+                    ctx.stroke();
+                }}
+
+                function drawRobot() {{
+                    if (!robotPose) return;
+                    const p = mapToScreen(robotPose.x, robotPose.y);
+                    const yawRad = -robotPose.yawRad;
+                    ctx.save();
+                    ctx.translate(p.x, p.y);
+                    ctx.rotate(yawRad);
+                    ctx.beginPath();
+                    ctx.moveTo(12, 0);
+                    ctx.lineTo(-7, -6);
+                    ctx.lineTo(-7, 6);
+                    ctx.closePath();
+                    ctx.fillStyle = '#ff5f5f';
+                    ctx.fill();
+                    ctx.beginPath();
+                    ctx.arc(0, 0, 3.6, 0, Math.PI * 2);
+                    ctx.fillStyle = '#ffe58f';
+                    ctx.fill();
+                    ctx.restore();
+                }}
+
+                function draw() {{
+                    if (!canvas.width || !canvas.height) return;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#0a111b';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    if (img.complete && img.naturalWidth > 0 && img.naturalHeight > 0) {{
+                        ctx.drawImage(img, view.offsetX, view.offsetY, meta.width * view.scale, meta.height * view.scale);
+                    }} else {{
+                        ctx.fillStyle = '#8ea6bf';
+                        ctx.font = "13px 'Microsoft YaHei'";
+                        ctx.fillText('????????????', 16, 24);
+                    }}
+
+                    drawPath();
+                    points.forEach((p, idx) => drawPoint(p.x, p.y, '#ffcc33', String(idx + 1)));
+                    if (selected) {{
+                        drawPoint(selected.x, selected.y, '#ff4d4f', selected.name || '???');
+                        if (Number.isFinite(selected.yawDeg)) {{
+                            drawYawArrow(selected.x, selected.y, selected.yawDeg, '#ff6b6b');
+                        }}
+                    }}
+                    drawRobot();
+                    refreshStatus();
+                }}
+
+                function handleClick(clientX, clientY) {{
+                    if (!pythonObj) return;
+                    const r = canvas.getBoundingClientRect();
+                    const x = clientX - r.left;
+                    const y = clientY - r.top;
+                    const m = screenToMap(x, y);
+                    if (!m) return;
+                    const baseYaw = robotPose ? robotPose.yawDeg : 0;
+                    selected = {{x: m.mapX, y: m.mapY, yawDeg: normalizeYawDeg(baseYaw), name: '???'}};
+                    draw();
+                    pythonObj.receive_map_xy(Number(m.mapX.toFixed(3)), Number(m.mapY.toFixed(3)));
+                }}
+
+                canvas.addEventListener('mousedown', function(e) {{
+                    if (e.button !== 0) return;
+                    if (poseMode && selected) {{
+                        const s = mapToScreen(selected.x, selected.y);
+                        const r = canvas.getBoundingClientRect();
+                        const cx = e.clientX - r.left;
+                        const cy = e.clientY - r.top;
+                        const dx = cx - s.x;
+                        const dy = cy - s.y;
+                        if ((dx * dx + dy * dy) <= 22 * 22) {{
+                            yawDrag.active = true;
+                            yawDrag.yawDeg = computeYawDegFromClient(e.clientX, e.clientY);
+                            selected.yawDeg = yawDrag.yawDeg;
+                            canvas.style.cursor = 'crosshair';
+                            draw();
+                            return;
+                        }}
+                    }}
+                    drag.active = true;
+                    drag.moved = false;
+                    drag.startX = e.clientX;
+                    drag.startY = e.clientY;
+                    drag.originOffsetX = view.offsetX;
+                    drag.originOffsetY = view.offsetY;
+                    canvas.style.cursor = 'grabbing';
+                }});
+
+                window.addEventListener('mousemove', function(e) {{
+                    if (yawDrag.active) {{
+                        yawDrag.yawDeg = computeYawDegFromClient(e.clientX, e.clientY);
+                        if (selected) selected.yawDeg = yawDrag.yawDeg;
+                        draw();
+                        return;
+                    }}
+                    if (!drag.active) return;
+                    const dx = e.clientX - drag.startX;
+                    const dy = e.clientY - drag.startY;
+                    if (Math.abs(dx) + Math.abs(dy) > 3) {{
+                        drag.moved = true;
+                    }}
+                    view.offsetX = drag.originOffsetX + dx;
+                    view.offsetY = drag.originOffsetY + dy;
+                    draw();
+                }});
+
+                window.addEventListener('mouseup', function(e) {{
+                    if (yawDrag.active) {{
+                        yawDrag.active = false;
+                        canvas.style.cursor = 'grab';
+                        if (selected) {{
+                            selected.yawDeg = normalizeYawDeg(yawDrag.yawDeg);
+                            if (pythonObj && typeof pythonObj.receive_map_pose === 'function') {{
+                                pythonObj.receive_map_pose(
+                                    Number(selected.x.toFixed(3)),
+                                    Number(selected.y.toFixed(3)),
+                                    Number(selected.yawDeg.toFixed(1))
+                                );
+                            }}
+                        }}
+                        draw();
+                        return;
+                    }}
+                    if (!drag.active) return;
+                    const moved = drag.moved;
+                    drag.active = false;
+                    canvas.style.cursor = 'grab';
+                    if (!moved) {{
+                        handleClick(e.clientX, e.clientY);
+                    }}
+                }});
+
+                canvas.addEventListener('wheel', function(e) {{
+                    e.preventDefault();
+                    const r = canvas.getBoundingClientRect();
+                    const cx = e.clientX - r.left;
+                    const cy = e.clientY - r.top;
+                    zoomAt(cx, cy, e.deltaY < 0 ? 1.15 : 0.87);
+                }}, {{ passive: false }});
+
+                btnPoseMode.addEventListener('click', function() {{
+                    poseMode = !poseMode;
+                    btnPoseMode.textContent = 'Yaw:' + (poseMode ? '开' : '关');
+                    btnPoseMode.style.background = poseMode ? '#2f5f8c' : '#16304a';
+                    draw();
+                }});
+
+                btnFit.addEventListener('click', function() {{
+                    fitView();
+                    draw();
+                }});
+                btnZoomIn.addEventListener('click', function() {{
+                    zoomAt(canvas.width / 2, canvas.height / 2, 1.2);
+                }});
+                btnZoomOut.addEventListener('click', function() {{
+                    zoomAt(canvas.width / 2, canvas.height / 2, 0.84);
+                }});
+
+                window.showMapMarkers = function(pointList) {{
+                    points = (pointList || []).map(p => ({{x: Number(p.x), y: Number(p.y), name: p.name || ''}}));
+                    draw();
+                }};
+
+                window.clearMapMarkers = function() {{
+                    points = [];
+                    selected = null;
+                    draw();
+                }};
+
+                window.locateMapPoint = function(x, y, name, yawDeg) {{
+                    const yaw = Number(yawDeg);
+                    selected = {{
+                        x: Number(x),
+                        y: Number(y),
+                        name: name || '???',
+                        yawDeg: Number.isFinite(yaw) ? normalizeYawDeg(yaw) : 0
+                    }};
+                    draw();
+                }};
+
+                window.setPoseMode = function(enabled) {{
+                    poseMode = !!enabled;
+                    btnPoseMode.textContent = 'Yaw:' + (poseMode ? '开' : '关');
+                    btnPoseMode.style.background = poseMode ? '#2f5f8c' : '#16304a';
+                    draw();
+                }};
+
+                window.updateRobotPose = function(x, y, yawDeg) {{
+                    const nx = Number(x);
+                    const ny = Number(y);
+                    const yaw = Number(yawDeg) || 0;
+                    if (!Number.isFinite(nx) || !Number.isFinite(ny)) return;
+                    robotPose = {{
+                        x: nx,
+                        y: ny,
+                        yawDeg: yaw,
+                        yawRad: yaw * Math.PI / 180.0
+                    }};
+                    draw();
+                }};
+
+                window.clearRobotPose = function() {{
+                    robotPose = null;
+                    draw();
+                }};
+
+                window.addEventListener('resize', resizeCanvas);
+                img.onload = draw;
+                resizeCanvas();
+            </script>
+        </body>
+        </html>
+        """
+        self.web_view.setHtml(html, baseUrl=QUrl.fromLocalFile(str(Path(meta["image_path"]).parent) + "/"))
+
+    def _try_init_grid_map(self) -> bool:
+        for yaml_path in self._candidate_map_yamls():
+            try:
+                meta = self._parse_map_yaml(yaml_path)
+                self._map_mode = "grid"
+                self._map_yaml_path = str(yaml_path)
+                self._load_grid_map_html(meta)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _parse_optional_float(self, text: str):
+        value = (text or "").strip()
+        if not value:
+            return None
+        return float(value)
+
+    def _normalize_yaw_deg(self, yaw: float) -> float:
+        while yaw > 180.0:
+            yaw -= 360.0
+        while yaw <= -180.0:
+            yaw += 360.0
+        return yaw
+
+    def _parse_required_yaw_deg(self) -> float:
+        if not hasattr(self, "txt_YawDeg"):
+            return float(self.selected_yaw_deg or 0.0)
+        raw = self.txt_YawDeg.text().strip()
+        if not raw:
+            raise ValueError("empty yaw")
+        yaw = float(raw)
+        if not math.isfinite(yaw):
+            raise ValueError("invalid yaw")
+        yaw = self._normalize_yaw_deg(yaw)
+        self.selected_yaw_deg = yaw
+        self.txt_YawDeg.setText(f"{yaw:.2f}".rstrip("0").rstrip("."))
+        return yaw
+
 
     def validate_required(self) -> bool:
         area_id = self.ui.txt_AreaId.currentData()
@@ -283,7 +954,7 @@ class BLL_InspectPoint(QMainWindow):
             self.ui.lab_Note.setText("请先创建并选择巡检区域后再保存点位！")
             self.ui.lab_Note.setStyleSheet("color: red;")
             return False
-
+        # 定义必填字段（控件变量 -> 字段名称）
         required = {
             self.ui.txt_PointName: "点位名称",
             self.ui.txt_PointCode: "点位编码"
@@ -293,12 +964,10 @@ class BLL_InspectPoint(QMainWindow):
                 self.ui.lab_Note.setText(f"{field_name}为必填项，请填写完整！")
                 self.ui.lab_Note.setStyleSheet("color: red;")
                 return False
-
-        if not self.ui.txt_Longitude.text().strip() or not self.ui.txt_Latitude.text().strip():
-            self.ui.lab_Note.setText("请先在 RViz 中使用 2D Nav Goal 采集点位坐标！")
+        if hasattr(self, "txt_YawDeg") and not self.txt_YawDeg.text().strip():
+            self.ui.lab_Note.setText("朝向为必填项，请填写车辆朝向角度(°)！")
             self.ui.lab_Note.setStyleSheet("color: red;")
             return False
-
         return True
 
     def setup_table_view(self) -> None:
@@ -473,21 +1142,43 @@ class BLL_InspectPoint(QMainWindow):
     def on_save(self) -> None:
         if not self.validate_required():
             return
-
         areaId = self.ui.txt_AreaId.currentData()
         pointName = self.ui.txt_PointName.text().strip()
         pointCode = self.ui.txt_PointCode.text().strip()
         pointType = self.ui.txt_PointType.currentIndex()
-        map_x_text = self.ui.txt_Longitude.text().strip()
-        map_y_text = self.ui.txt_Latitude.text().strip()
         remark = self.ui.txt_Remark.text().strip()
 
         try:
-            map_x = float(map_x_text)
-            map_y = float(map_y_text)
-            yaw_deg = float(self.selected_yaw_deg or 0.0)
-        except Exception:
-            self.ui.lab_Note.setText("坐标格式错误，请重新采集 RViz 点位！")
+            raw_x = self._parse_optional_float(self.ui.txt_Longitude.text())
+            raw_y = self._parse_optional_float(self.ui.txt_Latitude.text())
+        except ValueError:
+            self.ui.lab_Note.setText("坐标格式错误，请输入数字。")
+            self.ui.lab_Note.setStyleSheet("color: red;")
+            return
+
+        if self._is_grid_mode():
+            map_x = raw_x
+            map_y = raw_y
+            if map_x is None or map_y is None:
+                self.ui.lab_Note.setText("请先在地图上选择点位（MapX/MapY）。")
+                self.ui.lab_Note.setStyleSheet("color: red;")
+                return
+            longitude = self.selected_lng
+            latitude = self.selected_lat
+        else:
+            longitude = raw_x
+            latitude = raw_y
+            if longitude is None or latitude is None:
+                self.ui.lab_Note.setText("请先选择经纬度。")
+                self.ui.lab_Note.setStyleSheet("color: red;")
+                return
+            map_x = self.selected_map_x
+            map_y = self.selected_map_y
+
+        try:
+            yaw_deg = self._parse_required_yaw_deg()
+        except ValueError:
+            self.ui.lab_Note.setText("朝向角度格式错误，请输入有效数字（单位：度）。")
             self.ui.lab_Note.setStyleSheet("color: red;")
             return
 
@@ -495,21 +1186,22 @@ class BLL_InspectPoint(QMainWindow):
             if self.pointid:
                 query = """
                 UPDATE InspectPoint
-                SET AreaId = %s,
-                    PointName = %s,
-                    PointCode = %s,
-                    PointType = %s,
-                    Longitude = NULL,
-                    Latitude = NULL,
-                    MapX = %s,
-                    MapY = %s,
-                    YawDeg = %s,
-                    Remark = %s
-                WHERE PointId = %s
+                SET AreaId=%s, PointName=%s, PointCode=%s, PointType=%s,
+                    Longitude=%s, Latitude=%s, MapX=%s, MapY=%s, YawDeg=%s, Remark=%s
+                WHERE PointId=%s
                 """
                 params = (
-                    areaId, pointName, pointCode, pointType,
-                    map_x, map_y, yaw_deg, remark, self.pointid
+                    areaId,
+                    pointName,
+                    pointCode,
+                    pointType,
+                    longitude,
+                    latitude,
+                    map_x,
+                    map_y,
+                    yaw_deg,
+                    remark,
+                    self.pointid,
                 )
                 i = self.db.execute_query(query, params)
                 if i > 0:
@@ -520,12 +1212,10 @@ class BLL_InspectPoint(QMainWindow):
                     self.ui.lab_Note.setText("巡检点位信息修改失败！")
             else:
                 query = """
-                    INSERT INTO InspectPoint
-                    (AreaId, PointName, PointCode, PointType, Longitude, Latitude, MapX, MapY, YawDeg, Remark, Status)
-                    VALUES
-                    (%s, %s, %s, %s, NULL, NULL, %s, %s, %s, %s, 1)
+                INSERT INTO InspectPoint (AreaId, PointName, PointCode, PointType, Longitude, Latitude, MapX, MapY, YawDeg, Remark, Status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1)
                 """
-                params = (areaId, pointName, pointCode, pointType, map_x, map_y, yaw_deg, remark)
+                params = (areaId, pointName, pointCode, pointType, longitude, latitude, map_x, map_y, yaw_deg, remark)
                 i = self.db.execute_query(query, params)
                 if i > 0:
                     self.ui.lab_Note.setText("巡检点位信息添加成功！")
@@ -537,45 +1227,53 @@ class BLL_InspectPoint(QMainWindow):
             self.ui.lab_Note.setText("巡检点位信息保存失败！" + str(exc))
             return
 
+    # 选中某一项巡检点位数据
     def on_select(self, index) -> None:
         ins_item = self.ui.tv_InspectPoint.item(index.row(), 0)
         if ins_item is None:
             return
-
         self.pointid = int(ins_item.text())
         records = self.db.fetch_all("SELECT * FROM InspectPoint WHERE PointId = %s", (self.pointid,))
         if not records:
             return
         record = records[0]
-
+        area_id = record.get("AreaId", record.get("AreaID", ""))
         for idx in range(self.ui.txt_AreaId.count()):
-            if self.ui.txt_AreaId.itemData(idx) == record.get("AreaID", ""):
+            if self.ui.txt_AreaId.itemData(idx) == area_id:
                 self.ui.txt_AreaId.setCurrentIndex(idx)
                 break
-
-        map_x = record.get("MapX")
-        map_y = record.get("MapY")
-        if map_x is None:
-            map_x = record.get("Longitude", "")
-        if map_y is None:
-            map_y = record.get("Latitude", "")
-
-        self.selected_map_x = float(map_x) if str(map_x).strip() != "" else None
-        self.selected_map_y = float(map_y) if str(map_y).strip() != "" else None
-        self.selected_yaw_deg = float(record.get("YawDeg") or 0.0)
 
         self.ui.txt_PointName.setText(record.get("PointName", ""))
         self.ui.txt_PointCode.setText(record.get("PointCode", ""))
         self.ui.txt_PointType.setCurrentIndex(record.get("PointType", 0))
-        self.ui.txt_Longitude.setText("" if map_x is None else str(map_x))
-        self.ui.txt_Latitude.setText("" if map_y is None else str(map_y))
+        map_x = record.get("MapX")
+        map_y = record.get("MapY")
+        lon = record.get("Longitude")
+        lat = record.get("Latitude")
+        display_x = map_x if map_x is not None else lon
+        display_y = map_y if map_y is not None else lat
+        self.ui.txt_Longitude.setText("" if display_x is None else str(display_x))
+        self.ui.txt_Latitude.setText("" if display_y is None else str(display_y))
         self.ui.txt_Remark.setText(record.get("Remark", ""))
+        self.selected_map_x = float(map_x) if map_x is not None else None
+        self.selected_map_y = float(map_y) if map_y is not None else None
+        self.selected_lng = float(lon) if lon is not None else None
+        self.selected_lat = float(lat) if lat is not None else None
+        self.selected_yaw_deg = float(record.get("YawDeg") or 0.0)
+        if hasattr(self, "txt_YawDeg"):
+            self.txt_YawDeg.setText(f"{self.selected_yaw_deg:.2f}".rstrip("0").rstrip("."))
         self.ui.gbox_status.setTitle("修改巡检点位")
-        self.ui.lab_Note.setText(
-            f"当前点位: x={map_x}, y={map_y}, yaw={self.selected_yaw_deg:.1f}°"
-        )
-        self.ui.lab_Note.setStyleSheet("color: #2f6feb;")
+        self.ui.lab_Note.clear()
+        if self._is_grid_mode() and self.selected_map_x is not None and self.selected_map_y is not None:
+            self.web_view.page().runJavaScript(
+                f"if (typeof locateMapPoint === 'function') locateMapPoint({self.selected_map_x}, {self.selected_map_y}, {json.dumps(record.get('PointName', ''))}, {self.selected_yaw_deg});"
+            )
+        elif (not self._is_grid_mode()) and self.selected_lng is not None and self.selected_lat is not None:
+            self.web_view.page().runJavaScript(
+                f"locatePatrolMarker(1, {self.selected_lng}, {self.selected_lat}, {json.dumps(record.get('PointName', ''))})"
+            )
 
+        # 删除巡检点位
     def on_delete(self) -> None:
         selection = self.ui.tv_InspectPoint.selectedItems()
         if not selection:
@@ -649,27 +1347,66 @@ class BLL_InspectPoint(QMainWindow):
         self.ui.txt_Latitude.clear()
         self.ui.txt_Longitude.clear()
         self.ui.txt_Remark.clear()
+        if hasattr(self, "txt_YawDeg"):
+            self.txt_YawDeg.clear()
         self.ui.gbox_status.setTitle("新增巡检点位")
         self.pointid = None
+        self.selected_lng = None
+        self.selected_lat = None
         self.selected_map_x = None
         self.selected_map_y = None
         self.selected_yaw_deg = 0.0
 
     def init_map_channel(self):
-        """初始化地图通信通道"""
+        """初始化地图通信通道（优先本地栅格地图，失败则回退AMap）"""
         self.channel = QWebChannel()
-        self.map_communicator = MapCommunicator(self.ui.txt_Longitude, self.ui.txt_Latitude)
+        self.map_communicator = MapCommunicator()
         self.channel.registerObject("pythonObj", self.map_communicator)
         self.web_view.page().setWebChannel(self.channel)
 
-        # 绑定信号
         self.map_communicator.point_selected.connect(self.on_map_point_selected)
+        self.map_communicator.pose_selected.connect(self.on_map_pose_selected)
         self.map_communicator.marker_clicked.connect(self.on_marker_click)
-        # 新增：绑定搜索结果信号
         self.map_communicator.searchresult.connect(self.on_search_result)
 
-        # 加载高德地图
-        self.load_amap_html()
+        if not self._try_init_grid_map():
+            self._map_mode = "amap"
+            self.load_amap_html()
+
+        self._set_coordinate_labels()
+        self._init_robot_pose_sync()
+
+    def _init_robot_pose_sync(self) -> None:
+        self._last_robot_pose_sig = None
+        self._pose_timer = QTimer(self)
+        self._pose_timer.setInterval(500)
+        self._pose_timer.timeout.connect(self._sync_robot_pose_overlay)
+        try:
+            self._ros_pose_bridge = RosPoseBridge()
+        except Exception:
+            self._ros_pose_bridge = None
+            return
+        if self._ros_pose_bridge.is_ready():
+            self._pose_timer.start()
+
+    def _sync_robot_pose_overlay(self) -> None:
+        if not self._is_grid_mode():
+            return
+        bridge = self._ros_pose_bridge
+        if bridge is None or not bridge.is_ready():
+            return
+
+        pose = bridge.latest_pose()
+        if pose is None:
+            return
+        map_x, map_y, yaw_deg = pose
+        sig = (round(map_x, 3), round(map_y, 3), round(yaw_deg, 1))
+        if sig == self._last_robot_pose_sig:
+            return
+        self._last_robot_pose_sig = sig
+        self.web_view.page().runJavaScript(
+            f"if (typeof updateRobotPose === 'function') updateRobotPose({map_x:.3f}, {map_y:.3f}, {yaw_deg:.2f});"
+        )
 
     def load_amap_html(self):
         """加载高德地图HTML页面 - 替换为你的高德Web API Key"""
@@ -853,13 +1590,32 @@ class BLL_InspectPoint(QMainWindow):
         """
         self.web_view.setHtml(html, baseUrl=QUrl("https://webapi.amap.com/"))
 
-    def on_map_point_selected(self, lng, lat):
-        """地图选点成功 - 更新经纬度显示"""
-        self.selected_lng = lng
-        self.selected_lat = lat
-        #self.lnglat_label.setText(f"已选坐标：{lng:.6f}, {lat:.6f}")
-        self.ui.txt_Longitude.setText(f"{lng:.6f}")
-        self.ui.txt_Latitude.setText(f"{lat:.6f}")
+    def on_map_point_selected(self, x, y):
+        """地图选点成功 - 根据模式更新坐标"""
+        if self._is_grid_mode():
+            self.selected_map_x = float(x)
+            self.selected_map_y = float(y)
+            self.ui.txt_Longitude.setText(f"{self.selected_map_x:.3f}")
+            self.ui.txt_Latitude.setText(f"{self.selected_map_y:.3f}")
+        else:
+            self.selected_lng = float(x)
+            self.selected_lat = float(y)
+            self.ui.txt_Longitude.setText(f"{self.selected_lng:.6f}")
+            self.ui.txt_Latitude.setText(f"{self.selected_lat:.6f}")
+
+        if hasattr(self, "txt_YawDeg") and not self.txt_YawDeg.text().strip():
+            bridge = getattr(self, "_ros_pose_bridge", None)
+            pose = bridge.latest_pose() if bridge is not None and bridge.is_ready() else None
+            if pose is not None:
+                self.selected_yaw_deg = self._normalize_yaw_deg(float(pose[2]))
+                self.txt_YawDeg.setText(f"{self.selected_yaw_deg:.2f}".rstrip("0").rstrip("."))
+
+    def on_map_pose_selected(self, x, y, yaw_deg):
+        """地图拖拽朝向成功：同步点位与朝向"""
+        self.on_map_point_selected(x, y)
+        self.selected_yaw_deg = self._normalize_yaw_deg(float(yaw_deg))
+        if hasattr(self, "txt_YawDeg"):
+            self.txt_YawDeg.setText(f"{self.selected_yaw_deg:.2f}".rstrip("0").rstrip("."))
 
     def on_marker_click(self, point_id):
         """点击地图标记 - 自动选中右侧对应列表项"""
@@ -902,7 +1658,11 @@ class BLL_InspectPoint(QMainWindow):
             return False, f"网络错误：{str(e)}", ""
 
     def on_search_address(self):
-        """点击搜索按钮 - Web服务解析地址后调用JS定位"""
+        """点击搜索按钮 - 仅在AMap模式下启用"""
+        if self._is_grid_mode():
+            QMessageBox.information(self, "提示", "当前是本地栅格地图模式，不支持地址搜索。")
+            return
+
         address = self.ui.txt_MapAddress.text().strip()
         if not address:
             QMessageBox.warning(self, "提示", "请输入有效地址！")
@@ -910,7 +1670,6 @@ class BLL_InspectPoint(QMainWindow):
 
         success, res1, res2 = self.call_amap_web_service(address)
         if success:
-            # 调用新增的JS函数locateByLngLat
             lng, lat = res1, res2
             self.ui.txt_Longitude.setText(lng)
             self.ui.txt_Latitude.setText(lat)
@@ -945,137 +1704,134 @@ class BLL_InspectPoint(QMainWindow):
             QMessageBox.information(self, "提示", "当前没有可用的巡检区域。")
             return
 
-        recordlist = self.db.fetch_all(
-            """
-            SELECT PointName, Longitude, Latitude, MapX, MapY
-            FROM InspectPoint
-            WHERE AreaID=%s
-            """,
-            (area_id,),
-        )
+        recordlist = self.db.fetch_all("SELECT * FROM InspectPoint WHERE AreaID=%s", (area_id,))
+
+        if self._is_grid_mode():
+            points = []
+            for record in recordlist:
+                x = record.get("MapX")
+                y = record.get("MapY")
+                if x is None or y is None:
+                    continue
+                points.append({"x": float(x), "y": float(y), "name": record.get("PointName", "")})
+            payload = json.dumps(points, ensure_ascii=False)
+            self.web_view.page().runJavaScript(
+                f"if (typeof showMapMarkers === 'function') showMapMarkers({payload});"
+            )
+            return
 
         position_list = []
-        has_ros_points = False
-
         for record in recordlist:
             lng = record.get("Longitude")
             lat = record.get("Latitude")
-            map_x = record.get("MapX")
-            map_y = record.get("MapY")
+            if lng is None or lat is None:
+                continue
+            position_list.append({"lng": str(lng), "lat": str(lat), "name": record.get("PointName", "")})
 
-            if lng is not None and lat is not None:
-                position_list.append({
-                    "lng": str(lng),
-                    "lat": str(lat),
-                    "name": record.get("PointName", "未命名点位")
-                })
-            elif map_x is not None and map_y is not None:
-                has_ros_points = True
-
-        if position_list:
-            position_json = json.dumps(position_list, ensure_ascii=False)
-            self.web_view.page().runJavaScript(f"showBatchMarkers({position_json})")
-            return
-
-        if has_ros_points:
-            QMessageBox.information(
-                self,
-                "提示",
-                "当前区域点位使用的是 ROS 地图坐标(MapX/MapY)，不能直接在高德地图显示，请在 RViz 中查看。"
-            )
-        else:
-            QMessageBox.information(self, "提示", "当前区域还没有可显示的点位。")
+        position_json = json.dumps(position_list, ensure_ascii=False)
+        self.web_view.page().runJavaScript(f"showBatchMarkers({position_json})")
 
     def on_clear_batch_markers(self):
         """点击按钮：清除批量标注"""
+        if self._is_grid_mode():
+            self.web_view.page().runJavaScript("if (typeof clearMapMarkers === 'function') clearMapMarkers();")
+            return
         self.web_view.page().runJavaScript("clearBatchMarkers()")
 
-    def _init_ros_goal_bridge(self):
+    def closeEvent(self, event):
+        if self._pose_timer is not None:
+            self._pose_timer.stop()
+        super().closeEvent(event)
+
+
+class RosPoseBridge:
+    def __init__(self):
+        self._ready = False
+        self.error = ""
+        self._latest_pose = None
+        self._lock = threading.Lock()
+        self._subscriber = None
+
         try:
-            self._ros_goal_bridge = RosGoalBridge(self)
-            self._ros_goal_bridge.goal_received.connect(self.on_ros_goal_received)
-            self._ros_goal_bridge.start()
-            self.ui.lab_Note.setText("已接入 ROS 录点：请在 RViz 中使用 2D Nav Goal 采集点位。")
-            self.ui.lab_Note.setStyleSheet("color: #2f6feb;")
+            import rospy
+            from geometry_msgs.msg import PoseWithCovarianceStamped
+
+            self._rospy = rospy
+            if not rospy.core.is_initialized():
+                rospy.init_node("uav_point_pose_bridge", anonymous=True, disable_signals=True)
+            self._subscriber = rospy.Subscriber(
+                "/amcl_pose",
+                PoseWithCovarianceStamped,
+                self._on_amcl_pose,
+                queue_size=1,
+            )
+            self._ready = True
         except Exception as exc:
-            print(f"[WARN] ROS goal bridge unavailable: {exc}")
+            self.error = str(exc)
 
-    def on_ros_goal_received(self, map_x: float, map_y: float, yaw_deg: float) -> None:
-        self.selected_map_x = map_x
-        self.selected_map_y = map_y
-        self.selected_yaw_deg = yaw_deg
-        self.ui.txt_Longitude.setText(f"{map_x:.3f}")
-        self.ui.txt_Latitude.setText(f"{map_y:.3f}")
-        self.ui.lab_Note.setText(
-            f"已采集 RViz 点位: x={map_x:.3f}, y={map_y:.3f}, yaw={yaw_deg:.1f}°"
-        )
-        self.ui.lab_Note.setStyleSheet("color: #2f6feb;")
+    def is_ready(self) -> bool:
+        return self._ready
 
-class RosGoalBridge(QObject):
-    goal_received = pyqtSignal(float, float, float)
+    def latest_pose(self):
+        with self._lock:
+            return self._latest_pose
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._sub = None
-        self._euler_from_quaternion = None
-
-    def start(self):
-        import rospy  # type: ignore
-        from geometry_msgs.msg import PoseStamped  # type: ignore
-        from tf.transformations import euler_from_quaternion  # type: ignore
-
-        self._euler_from_quaternion = euler_from_quaternion
-
-        if not rospy.core.is_initialized():
-            rospy.init_node("qt_ui_ros_bridge", anonymous=True, disable_signals=True)
-
-        self._sub = rospy.Subscriber("/move_base_simple/goal", PoseStamped, self._on_goal)
-
-    def _on_goal(self, msg):
-        q = msg.pose.orientation
-        _, _, yaw = self._euler_from_quaternion([q.x, q.y, q.z, q.w])
-        yaw_deg = math.degrees(yaw)
-        self.goal_received.emit(
-            float(msg.pose.position.x),
-            float(msg.pose.position.y),
-            float(yaw_deg),
-        )
-
+    def _on_amcl_pose(self, msg):
+        try:
+            pose = msg.pose.pose
+            x = float(pose.position.x)
+            y = float(pose.position.y)
+            q = pose.orientation
+            yaw = math.atan2(
+                2.0 * (q.w * q.z + q.x * q.y),
+                1.0 - 2.0 * (q.y * q.y + q.z * q.z),
+            )
+            yaw_deg = float(yaw * 180.0 / math.pi)
+            with self._lock:
+                self._latest_pose = (x, y, yaw_deg)
+        except Exception:
+            pass
+# ------------------------------ 以下代码完全不变（地图/通信/界面） ------------------------------
 class MapCommunicator(QObject):
-    # 定义信号，用于向主窗口传递地图选点经纬度和标记点击事件
     point_selected = pyqtSignal(float, float)
+    pose_selected = pyqtSignal(float, float, float)
     marker_clicked = pyqtSignal(int)
-    # 搜索结果信号（类型：success/error，消息：提示文本）
     searchresult = pyqtSignal(str, str)
 
-    def __init__(self, txt_lng, txt_lat):
+    def __init__(self):
         super().__init__()
-        self.txt_lng = txt_lng  # 用于显示经纬度的QT标签
-        self.txt_lat = txt_lat
-
-        # 定义JS可调用的槽函数，接收经纬度字符串（装饰器必须加）
-        # pyqtSlot(str) 表示接收字符串类型参数
 
     @pyqtSlot(str)
     def receive_lnglat(self, lnglat_str):
-        # 如需单独获取经度、纬度，可拆分字符串
-        lng, lat = lnglat_str.split(',')
-        self.txt_lng.setText(lng)
-        self.txt_lat.setText(lat)
-        # print(f"经度：{lng.strip()}，纬度：{lat.strip()}")
+        parts = [x.strip() for x in lnglat_str.split(",")]
+        if len(parts) < 2:
+            return
+        try:
+            lng = float(parts[0])
+            lat = float(parts[1])
+        except Exception:
+            return
+        self.point_selected.emit(lng, lat)
+
+    @pyqtSlot(float, float)
+    def receive_map_xy(self, map_x, map_y):
+        self.point_selected.emit(float(map_x), float(map_y))
+
+    @pyqtSlot(float, float, float)
+    def receive_map_pose(self, map_x, map_y, yaw_deg):
+        self.pose_selected.emit(float(map_x), float(map_y), float(yaw_deg))
 
     @pyqtSlot(str)
     def on_map_click(self, lnglat_str):
-        """接收地图点击的经纬度"""
-        lng, lat = map(float, lnglat_str.split(','))
-        self.point_selected.emit(lng, lat)
+        self.receive_lnglat(lnglat_str)
 
     @pyqtSlot(str)
     def on_marker_click(self, point_id_str):
-        """接收地图标记点击事件"""
-        self.marker_clicked.emit(int(point_id_str))
+        try:
+            self.marker_clicked.emit(int(point_id_str))
+        except Exception:
+            pass
 
-    # 新增：接收JS的搜索结果
     @pyqtSlot(str, str)
     def search_result(self, res_type, message):
         self.searchresult.emit(res_type, message)

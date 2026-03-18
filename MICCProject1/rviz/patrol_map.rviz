@@ -1,0 +1,107 @@
+Panels:
+  - Class: rviz/Displays
+    Name: Displays
+  - Class: rviz/Views
+    Name: Views
+  - Class: rviz/Selection
+    Name: Selection
+  - Class: rviz/Tool Properties
+    Name: Tool Properties
+  - Class: rviz/Time
+    Name: Time
+
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz/Grid
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Plane Cell Count: 20
+      Cell Size: 1
+
+    - Class: rviz/Map
+      Enabled: true
+      Name: Map
+      Topic: /map
+      Alpha: 0.7
+      Color Scheme: map
+      Draw Behind: false
+
+    - Class: rviz/TF
+      Enabled: true
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: true
+      Marker Scale: 1
+
+    - Class: rviz/RobotModel
+      Enabled: true
+      Name: RobotModel
+      Robot Description: robot_description
+
+    - Class: rviz/Path
+      Enabled: true
+      Name: GlobalPlan
+      Topic: /move_base/GlobalPlanner/plan
+      Color: 255; 0; 0
+      Alpha: 1
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.05
+
+    - Class: rviz/Path
+      Enabled: true
+      Name: LocalPlan
+      Topic: /move_base/TebLocalPlannerROS/local_plan
+      Color: 0; 255; 0
+      Alpha: 1
+      Buffer Length: 1
+      Line Style: Lines
+      Line Width: 0.05
+
+    - Class: rviz/Pose
+      Enabled: true
+      Name: AmclPose
+      Topic: /amcl_pose
+      Color: 255; 255; 0
+      Shaft Length: 0.5
+      Shaft Radius: 0.03
+      Head Length: 0.2
+      Head Radius: 0.06
+
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+
+  Name: root
+  Tools:
+    - Class: rviz/Interact
+      Hide Inactive Objects: true
+    - Class: rviz/MoveCamera
+    - Class: rviz/Select
+    - Class: rviz/FocusCamera
+    - Class: rviz/Measure
+    - Class: rviz/SetInitialPose
+      Topic: /initialpose
+    - Class: rviz/SetGoal
+      Topic: /move_base_simple/goal
+
+  Views:
+    Current:
+      Class: rviz/TopDownOrtho
+      Name: TopDown
+      Angle: 0
+      Scale: 20
+      Value: true
+
+Window Geometry:
+  Displays:
+    collapsed: false
+  Height: 900
+  Width: 1400
+  X: 100
+  Y: 50

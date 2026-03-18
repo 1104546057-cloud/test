@@ -1,12 +1,14 @@
-﻿import math
+import math
 import json
+import os
+import re
 import sys
 from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
-from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QCoreApplication, Qt, QUrl, QEvent
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QCoreApplication, Qt, QUrl, QEvent, QByteArray, QBuffer, QIODevice
+from PyQt5.QtGui import QIcon, QPixmap, QImage
 from PyQt5.QtWidgets import QApplication, QDialog, QAbstractItemView, QTableWidgetItem, QMessageBox, QHeaderView, \
     QWidget, QHBoxLayout, QLabel, QFrame, QGraphicsOpacityEffect, QVBoxLayout
 from qfluentwidgets import TransparentToolButton, FluentIcon as FIF, PushButton
@@ -35,6 +37,7 @@ class BLL_InspectRoute(QDialog):
         self.web_view = None
         self._route_map_placeholder = None
         self._route_map_ready = False
+        self._route_map_meta = None
         self._pending_route_points = None
         self._loading_route_points = False
         self._drag_row_from = -1
@@ -227,16 +230,31 @@ class BLL_InspectRoute(QDialog):
         self._clear_route_map()
 
     def load_inspectroute(self) -> None:
+        keep_route_id = self.routeid if self.routeid else self._current_route_id_from_table()
         self.ui.tv_InspectRoute.setRowCount(0)
         recordlist = self.db.fetch_all("select *, ia.AreaName from InspectArea ia, InspectRoute ir where ir.AreaID = ia.AreaID")
         for row, record in enumerate(recordlist):
             self.ui.tv_InspectRoute.insertRow(row)
-            self.ui.tv_InspectRoute.setItem(row, 0, QTableWidgetItem(str(record.get("RouteId", ""))))  # 巡检点位ID
+            route_item = QTableWidgetItem(str(record.get("RouteId", "")))
+            route_item.setData(Qt.UserRole, record.get("AreaId", record.get("AreaID")))
+            self.ui.tv_InspectRoute.setItem(row, 0, route_item)  # 巡检点位ID
             self.ui.tv_InspectRoute.setItem(row, 1, QTableWidgetItem(str(record.get("AreaName", ""))))  #点位名称
             self.ui.tv_InspectRoute.setItem(row, 2, QTableWidgetItem(str(record.get("RouteName", ""))))   #区域名称
             self.ui.tv_InspectRoute.setItem(row, 3,  QTableWidgetItem(str(record.get("PointCount",""))))  #经度
             self.ui.tv_InspectRoute.setItem(row, 4, QTableWidgetItem(str(record.get("PathLength",""))))  #纬度
             self.ui.tv_InspectRoute.setItem(row, 5, QTableWidgetItem("启用" if record.get("Status") == 1 else "禁用" )) #状态
+        if self.ui.tv_InspectRoute.rowCount() <= 0:
+            self.routeid = None
+            return
+        if keep_route_id is not None and self._find_route_row(int(keep_route_id)) >= 0:
+            self._select_route_by_id(int(keep_route_id))
+            return
+        area_id = self.ui.txt_AreaId.currentData() if self.ui.txt_AreaId.count() > 0 else None
+        first_row = self._find_first_route_row_by_area(area_id)
+        if first_row < 0:
+            first_row = 0
+        self.ui.tv_InspectRoute.selectRow(first_row)
+        self.on_select(first_row)
 
     def load_inspectarea(self):
         self.ui.txt_AreaId.clear()
@@ -267,6 +285,11 @@ class BLL_InspectRoute(QDialog):
         self.load_inspectPointByAreaId(area_id)
         self.ui.lab_selectedArea.setText(f"当前区域：{area_name}")
         if not self.routeid:
+            route_row = self._find_first_route_row_by_area(area_id)
+            if route_row >= 0:
+                self.ui.tv_InspectRoute.selectRow(route_row)
+                self.on_select(route_row)
+                return
             self.ui.tv_InspectPoint2.setRowCount(0)
             self.ui.lab_selectedRoute.setText("当前路线：未选择")
             self._clear_route_map()
@@ -613,6 +636,95 @@ class BLL_InspectRoute(QDialog):
         table.selectRow(dst_row)
         self._persist_route_point_order()
 
+    def _candidate_map_yamls(self):
+        candidates = []
+        env_yaml = (os.getenv("UAV_MAP_YAML", "") or "").strip()
+        if env_yaml:
+            candidates.append(Path(env_yaml).expanduser())
+        candidates.extend(
+            [
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_test_map.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+            ]
+        )
+        existing = [p for p in candidates if p.exists()]
+        existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return existing
+
+    def _parse_map_yaml(self, yaml_path: Path):
+        content = yaml_path.read_text(encoding="utf-8", errors="ignore")
+        image_value = None
+        resolution = None
+        origin = None
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("image:"):
+                image_value = line.split(":", 1)[1].strip().strip("\"'")
+            elif line.startswith("resolution:"):
+                resolution = float(line.split(":", 1)[1].strip())
+            elif line.startswith("origin:"):
+                match = re.search(r"\[([^\]]+)\]", line)
+                if match:
+                    parts = [p.strip() for p in match.group(1).split(",")]
+                    if len(parts) >= 2:
+                        origin = (
+                            float(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]) if len(parts) >= 3 else 0.0,
+                        )
+
+        if not image_value or resolution is None or origin is None:
+            raise ValueError(f"invalid map yaml: {yaml_path}")
+
+        image_path = Path(image_value)
+        if not image_path.is_absolute():
+            image_path = (yaml_path.parent / image_path).resolve()
+        if not image_path.exists():
+            local_fallback = (yaml_path.parent / Path(image_value).name).resolve()
+            if local_fallback.exists():
+                image_path = local_fallback
+        if not image_path.exists():
+            raise FileNotFoundError(f"map image not found: {image_path}")
+
+        qimg = QImage(str(image_path))
+        if qimg.isNull():
+            raise ValueError(f"failed to read map image: {image_path}")
+
+        png_bytes = QByteArray()
+        buffer = QBuffer(png_bytes)
+        if not buffer.open(QIODevice.WriteOnly):
+            raise ValueError("open memory buffer failed")
+        if not qimg.save(buffer, "PNG"):
+            buffer.close()
+            raise ValueError("convert map image to PNG failed")
+        buffer.close()
+        image_data_url = "data:image/png;base64," + bytes(png_bytes.toBase64()).decode("ascii")
+        return {
+            "yaml_path": str(yaml_path),
+            "map_name": yaml_path.name,
+            "image_path": str(image_path),
+            "image_data_url": image_data_url,
+            "width": int(qimg.width()),
+            "height": int(qimg.height()),
+            "resolution": float(resolution),
+            "origin_x": float(origin[0]),
+            "origin_y": float(origin[1]),
+            "origin_yaw": float(origin[2]),
+        }
+
+    def _try_pick_route_map_meta(self) -> bool:
+        self._route_map_meta = None
+        for yaml_path in self._candidate_map_yamls():
+            try:
+                self._route_map_meta = self._parse_map_yaml(yaml_path)
+                return True
+            except Exception:
+                continue
+        return False
+
     def _init_map_panel(self) -> None:
         host = getattr(self.ui, "gbox_map", None)
         if host is None:
@@ -641,100 +753,420 @@ class BLL_InspectRoute(QDialog):
         self.channel = QWebChannel(self.web_view.page())
         self.web_view.page().setWebChannel(self.channel)
         self.web_view.loadFinished.connect(self._on_map_load_finished)
+        self._try_pick_route_map_meta()
         self._load_route_map_html()
 
     def _load_route_map_html(self) -> None:
         if self.web_view is None:
             return
 
-        amap_key = "dcfef1b0386efcf3b898a1ca8c6b7a78"
+        meta = self._route_map_meta
+        meta_json = json.dumps(meta, ensure_ascii=False) if meta else "null"
+        map_name = meta.get("map_name", "????") if meta else "???"
+        legend = f"???? | {map_name}"
+
         html = f"""
         <!DOCTYPE html>
         <html lang="zh-CN">
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>路线预览</title>
+            <title>????</title>
             <style>
-                html, body, #container {{
+                html, body {{
                     width: 100%;
                     height: 100%;
                     margin: 0;
                     padding: 0;
+                    background: #0f1722;
                     overflow: hidden;
-                    background: #eef3f9;
                 }}
+                #root {{ width: 100%; height: 100%; position: relative; }}
+                #canvas {{ width: 100%; height: 100%; display: block; background: #0f1722; cursor: grab; }}
+                #legend {{
+                    position: absolute;
+                    left: 8px;
+                    top: 8px;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    background: rgba(0, 0, 0, 0.5);
+                    color: #dce7f3;
+                    font: 12px "Microsoft YaHei";
+                    z-index: 10;
+                    max-width: calc(100% - 20px);
+                    white-space: nowrap;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                }}
+                #toolbar {{
+                    position: absolute;
+                    right: 10px;
+                    top: 8px;
+                    z-index: 11;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    background: rgba(10, 22, 35, 0.72);
+                    border: 1px solid rgba(127, 174, 214, 0.35);
+                    border-radius: 8px;
+                    padding: 5px 7px;
+                }}
+                #toolbar button {{
+                    min-width: 34px;
+                    height: 24px;
+                    border: 1px solid #4a6f93;
+                    border-radius: 5px;
+                    background: #16304a;
+                    color: #dcefff;
+                    font: 12px "Microsoft YaHei";
+                    cursor: pointer;
+                }}
+                #toolbar button:hover {{ background: #204566; }}
+                #hint {{ color: #9db9d4; font: 11px "Microsoft YaHei"; }}
             </style>
-            <script src="https://webapi.amap.com/maps?v=2.0&key={amap_key}"></script>
         </head>
         <body>
-            <div id="container"></div>
+            <div id="root">
+                <div id="legend">{legend}</div>
+                <div id="toolbar">
+                    <button id="btnFitRoute" title="????">??</button>
+                    <button id="btnFitMap" title="????">??</button>
+                    <button id="btnZoomIn" title="??">+</button>
+                    <button id="btnZoomOut" title="??">-</button>
+                    <span id="hint"></span>
+                </div>
+                <canvas id="canvas"></canvas>
+            </div>
             <script>
-                var map = new AMap.Map('container', {{
-                    zoom: 16,
-                    center: [113.589038, 22.347812],
-                    viewMode: '2D'
-                }});
-                var markers = [];
-                var routeLine = null;
+                const canvas = document.getElementById('canvas');
+                const ctx = canvas.getContext('2d');
+                const btnFitRoute = document.getElementById('btnFitRoute');
+                const btnFitMap = document.getElementById('btnFitMap');
+                const btnZoomIn = document.getElementById('btnZoomIn');
+                const btnZoomOut = document.getElementById('btnZoomOut');
+                const hintEl = document.getElementById('hint');
+                const legendEl = document.getElementById('legend');
+
+                const mapMeta = {meta_json};
+                const hasMap = !!mapMeta;
+                let mapImg = null;
+                let points = [];
+                let bounds = null;
+                let useMapProjection = hasMap;
+                let inited = false;
+
+                const view = {{ scale: 1, offsetX: 0, offsetY: 0 }};
+                const drag = {{ active: false, moved: false, startX: 0, startY: 0, originOffsetX: 0, originOffsetY: 0 }};
+
+                if (hasMap) {{
+                    mapImg = new Image();
+                    mapImg.src = mapMeta.image_data_url;
+                    mapImg.onerror = function() {{
+                        console.error('route preview map image load failed');
+                    }};
+                    hintEl.textContent = '???? / ????';
+                }} else {{
+                    hintEl.textContent = '?????????';
+                    btnFitMap.disabled = true;
+                    btnZoomIn.disabled = true;
+                    btnZoomOut.disabled = true;
+                }}
 
                 function clearRoutePreview() {{
-                    if (routeLine) {{
-                        map.remove(routeLine);
-                        routeLine = null;
-                    }}
-                    if (markers.length) {{
-                        map.remove(markers);
-                        markers = [];
+                    points = [];
+                    bounds = null;
+                    useMapProjection = hasMap;
+                    if (hasMap) {{
+                        fitFullMap();
+                    }} else {{
+                        draw();
                     }}
                 }}
 
-                function showRoutePreview(points) {{
-                    clearRoutePreview();
-                    if (!points || !points.length) {{
+                function baseFitScale() {{
+                    if (!hasMap) return 1;
+                    if (!canvas.width || !canvas.height) return 1;
+                    return Math.min(canvas.width / mapMeta.width, canvas.height / mapMeta.height);
+                }}
+
+                function worldToScreen(px, py) {{
+                    return {{
+                        x: view.offsetX + px * view.scale,
+                        y: view.offsetY + py * view.scale,
+                    }};
+                }}
+
+                function screenToWorld(x, y) {{
+                    return {{
+                        px: (x - view.offsetX) / view.scale,
+                        py: (y - view.offsetY) / view.scale,
+                    }};
+                }}
+
+                function fitFullMap() {{
+                    if (!hasMap) {{
+                        draw();
+                        return;
+                    }}
+                    const s = baseFitScale();
+                    view.scale = s;
+                    view.offsetX = (canvas.width - mapMeta.width * s) / 2;
+                    view.offsetY = (canvas.height - mapMeta.height * s) / 2;
+                    draw();
+                }}
+
+                function mapToPixel(mapX, mapY) {{
+                    const px = (mapX - mapMeta.origin_x) / mapMeta.resolution;
+                    const py = mapMeta.height - 1 - ((mapY - mapMeta.origin_y) / mapMeta.resolution);
+                    return {{ px, py }};
+                }}
+
+                function pointInsideMap(p) {{
+                    if (!hasMap) return false;
+                    const pix = mapToPixel(p.x, p.y);
+                    return pix.px >= 0 && pix.px <= mapMeta.width && pix.py >= 0 && pix.py <= mapMeta.height;
+                }}
+
+                function fitRouteView() {{
+                    if (!hasMap || !useMapProjection || !points.length) {{
+                        if (hasMap) fitFullMap();
+                        else draw();
                         return;
                     }}
 
-                    markers = points.map(function(point, index) {{
-                        var label = String(index + 1);
-                        return new AMap.Marker({{
-                            position: [point.lng, point.lat],
-                            title: point.name || label,
-                            label: {{
-                                content: label,
-                                direction: 'top'
-                            }}
-                        }});
-                    }});
-                    map.add(markers);
+                    const pixels = points.map(p => mapToPixel(p.x, p.y));
+                    const xs = pixels.map(p => p.px);
+                    const ys = pixels.map(p => p.py);
+                    const minX = Math.min.apply(null, xs);
+                    const maxX = Math.max.apply(null, xs);
+                    const minY = Math.min.apply(null, ys);
+                    const maxY = Math.max.apply(null, ys);
 
-                    var path = points.map(function(point) {{
-                        return [point.lng, point.lat];
-                    }});
+                    const pad = 42;
+                    const usableW = Math.max(1, canvas.width - pad * 2);
+                    const usableH = Math.max(1, canvas.height - pad * 2);
+                    const w = Math.max(0.001, maxX - minX);
+                    const h = Math.max(0.001, maxY - minY);
 
-                    if (path.length >= 2) {{
-                        routeLine = new AMap.Polyline({{
-                            path: path,
-                            strokeColor: '#2d7ff9',
-                            strokeOpacity: 0.95,
-                            strokeWeight: 5,
-                            strokeStyle: 'solid'
-                        }});
-                        map.add(routeLine);
-                    }}
+                    const s = Math.min(usableW / w, usableH / h);
+                    const minS = Math.max(baseFitScale() * 0.35, 0.05);
+                    const maxS = Math.max(baseFitScale() * 50.0, minS);
+                    view.scale = Math.max(minS, Math.min(maxS, s));
 
-                    var overlays = markers.slice();
-                    if (routeLine) {{
-                        overlays.push(routeLine);
-                    }}
-                    map.setFitView(overlays, false, [40, 40, 40, 40]);
+                    const cx = (minX + maxX) / 2;
+                    const cy = (minY + maxY) / 2;
+                    view.offsetX = canvas.width / 2 - cx * view.scale;
+                    view.offsetY = canvas.height / 2 - cy * view.scale;
+                    draw();
                 }}
+
+                function zoomAt(cx, cy, factor) {{
+                    if (!hasMap || !useMapProjection) return;
+                    const prev = view.scale;
+                    const minS = Math.max(baseFitScale() * 0.35, 0.05);
+                    const maxS = Math.max(baseFitScale() * 60.0, minS);
+                    let next = prev * factor;
+                    next = Math.max(minS, Math.min(maxS, next));
+                    if (Math.abs(next - prev) < 1e-8) return;
+                    const world = screenToWorld(cx, cy);
+                    view.scale = next;
+                    view.offsetX = cx - world.px * next;
+                    view.offsetY = cy - world.py * next;
+                    draw();
+                }}
+
+                function showRoutePreview(newPoints) {{
+                    points = [];
+                    bounds = null;
+                    useMapProjection = hasMap;
+                    if (!newPoints || !newPoints.length) {{
+                        draw();
+                        return;
+                    }}
+
+                    points = newPoints
+                        .map(p => ({{ x: Number(p.x), y: Number(p.y), name: p.name || '' }}))
+                        .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y));
+
+                    if (!points.length) {{
+                        draw();
+                        return;
+                    }}
+
+                    if (hasMap) {{
+                        useMapProjection = points.every(pointInsideMap);
+                    }} else {{
+                        useMapProjection = false;
+                    }}
+
+                    if (!useMapProjection) {{
+                        const xs = points.map(p => p.x);
+                        const ys = points.map(p => p.y);
+                        bounds = {{
+                            minX: Math.min.apply(null, xs),
+                            maxX: Math.max.apply(null, xs),
+                            minY: Math.min.apply(null, ys),
+                            maxY: Math.max.apply(null, ys)
+                        }};
+                        draw();
+                        return;
+                    }}
+
+                    fitRouteView();
+                }}
+
+                function toScreen(p) {{
+                    if (useMapProjection) {{
+                        const pix = mapToPixel(p.x, p.y);
+                        const pos = worldToScreen(pix.px, pix.py);
+                        return {{ sx: pos.x, sy: pos.y }};
+                    }}
+                    if (!bounds) return {{ sx: 0, sy: 0 }};
+                    const pad = 36;
+                    const w = Math.max(1, canvas.width - pad * 2);
+                    const h = Math.max(1, canvas.height - pad * 2);
+                    const dx = Math.max(0.001, bounds.maxX - bounds.minX);
+                    const dy = Math.max(0.001, bounds.maxY - bounds.minY);
+                    const scale = Math.min(w / dx, h / dy);
+                    const contentW = dx * scale;
+                    const contentH = dy * scale;
+                    const ox = (canvas.width - contentW) / 2;
+                    const oy = (canvas.height - contentH) / 2;
+                    const sx = ox + (p.x - bounds.minX) * scale;
+                    const sy = oy + (bounds.maxY - p.y) * scale;
+                    return {{ sx, sy }};
+                }}
+
+                function draw() {{
+                    canvas.width = canvas.clientWidth;
+                    canvas.height = canvas.clientHeight;
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#0f1722';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                    if (hasMap) {{
+                        if (mapImg && mapImg.complete && mapImg.naturalWidth > 0 && mapImg.naturalHeight > 0) {{
+                            ctx.drawImage(mapImg, view.offsetX, view.offsetY, mapMeta.width * view.scale, mapMeta.height * view.scale);
+                        }}
+                    }}
+
+                    if (!points.length) return;
+
+                    if (points.length >= 2) {{
+                        ctx.beginPath();
+                        points.forEach((p, idx) => {{
+                            const pos = toScreen(p);
+                            if (idx === 0) ctx.moveTo(pos.sx, pos.sy);
+                            else ctx.lineTo(pos.sx, pos.sy);
+                        }});
+                        ctx.strokeStyle = '#3a8dff';
+                        ctx.lineWidth = 3;
+                        ctx.stroke();
+                    }}
+
+                    points.forEach((p, idx) => {{
+                        const pos = toScreen(p);
+                        ctx.beginPath();
+                        ctx.arc(pos.sx, pos.sy, 5, 0, Math.PI * 2);
+                        ctx.fillStyle = '#ffd34d';
+                        ctx.fill();
+                        ctx.fillStyle = '#ffffff';
+                        ctx.font = '12px Microsoft YaHei';
+                        const label = String(idx + 1) + (p.name ? (' ' + p.name) : '');
+                        ctx.fillText(label, pos.sx + 7, pos.sy - 8);
+                    }});
+
+                    if (hasMap) {{
+                        const modeText = useMapProjection ? '????' : '????';
+                        legendEl.textContent = '{legend} | ' + modeText + ' | ?? ' + (view.scale / Math.max(baseFitScale(), 1e-6)).toFixed(2) + 'x';
+                    }}
+                }}
+
+                function resizeCanvas() {{
+                    if (!hasMap) {{
+                        draw();
+                        return;
+                    }}
+
+                    let center = null;
+                    if (inited && canvas.width > 0 && canvas.height > 0 && useMapProjection) {{
+                        center = screenToWorld(canvas.width / 2, canvas.height / 2);
+                    }}
+
+                    canvas.width = canvas.clientWidth;
+                    canvas.height = canvas.clientHeight;
+
+                    if (!inited) {{
+                        fitFullMap();
+                        inited = true;
+                        return;
+                    }}
+
+                    if (center && useMapProjection) {{
+                        view.offsetX = canvas.width / 2 - center.px * view.scale;
+                        view.offsetY = canvas.height / 2 - center.py * view.scale;
+                    }}
+                    draw();
+                }}
+
+                canvas.addEventListener('mousedown', function(e) {{
+                    if (!hasMap || !useMapProjection || e.button !== 0) return;
+                    drag.active = true;
+                    drag.moved = false;
+                    drag.startX = e.clientX;
+                    drag.startY = e.clientY;
+                    drag.originOffsetX = view.offsetX;
+                    drag.originOffsetY = view.offsetY;
+                    canvas.style.cursor = 'grabbing';
+                }});
+
+                window.addEventListener('mousemove', function(e) {{
+                    if (!drag.active) return;
+                    const dx = e.clientX - drag.startX;
+                    const dy = e.clientY - drag.startY;
+                    if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+                    view.offsetX = drag.originOffsetX + dx;
+                    view.offsetY = drag.originOffsetY + dy;
+                    draw();
+                }});
+
+                window.addEventListener('mouseup', function() {{
+                    if (!drag.active) return;
+                    drag.active = false;
+                    canvas.style.cursor = 'grab';
+                }});
+
+                canvas.addEventListener('wheel', function(e) {{
+                    if (!hasMap || !useMapProjection) return;
+                    e.preventDefault();
+                    const r = canvas.getBoundingClientRect();
+                    const cx = e.clientX - r.left;
+                    const cy = e.clientY - r.top;
+                    zoomAt(cx, cy, e.deltaY < 0 ? 1.15 : 0.87);
+                }}, {{ passive: false }});
+
+                btnFitRoute.addEventListener('click', function() {{
+                    fitRouteView();
+                }});
+                btnFitMap.addEventListener('click', function() {{
+                    fitFullMap();
+                }});
+                btnZoomIn.addEventListener('click', function() {{
+                    zoomAt(canvas.width / 2, canvas.height / 2, 1.2);
+                }});
+                btnZoomOut.addEventListener('click', function() {{
+                    zoomAt(canvas.width / 2, canvas.height / 2, 0.84);
+                }});
+
+                window.addEventListener('resize', resizeCanvas);
+                if (mapImg) mapImg.onload = draw;
+                resizeCanvas();
             </script>
         </body>
         </html>
         """
         self._route_map_ready = False
-        self.web_view.setHtml(html, baseUrl=QUrl("https://webapi.amap.com/"))
+        self.web_view.setHtml(html)
 
     def _on_map_load_finished(self, ok: bool) -> None:
         self._route_map_ready = ok
@@ -762,8 +1194,42 @@ class BLL_InspectRoute(QDialog):
         )
 
     def _refresh_route_map(self, route_id=None) -> None:
-        # 室内模式下不再使用高德经纬度预览，路线请直接在 RViz 中查看
-        self._clear_route_map()
+        if self.web_view is None:
+            return
+
+        route_id = route_id if route_id is not None else self.routeid
+        if not route_id:
+            self._clear_route_map()
+            return
+
+        recordlist = self.db.fetch_all(
+            """
+            SELECT ip.MapX, ip.MapY, ip.Longitude, ip.Latitude, ip.PointName
+            FROM InspectRoutePoint rp
+            JOIN InspectPoint ip ON rp.PointId = ip.PointId
+            WHERE rp.RouteId = %s
+            ORDER BY rp.SortNo
+            """,
+            (route_id,),
+        )
+
+        points = []
+        for record in recordlist:
+            x = record.get("MapX")
+            y = record.get("MapY")
+            if x is None or y is None:
+                x = record.get("Longitude")
+                y = record.get("Latitude")
+            if x is None or y is None:
+                continue
+            points.append(
+                {
+                    "x": float(x),
+                    "y": float(y),
+                    "name": record.get("PointName") or "",
+                }
+            )
+        self._apply_route_map_points(points)
 
     def _dock_nav_bar(self) -> bool:
         return False
@@ -811,6 +1277,61 @@ class BLL_InspectRoute(QDialog):
             return
         self.ui.tv_InspectRoute.selectRow(row)
         self.on_select(row)
+
+    def _current_route_row(self) -> int:
+        row = self.ui.tv_InspectRoute.currentRow()
+        if row >= 0:
+            return row
+        model = self.ui.tv_InspectRoute.selectionModel()
+        if model is not None:
+            rows = model.selectedRows()
+            if rows:
+                return rows[0].row()
+        return -1
+
+    def _current_route_id_from_table(self):
+        row = self._current_route_row()
+        if row < 0:
+            return None
+        item = self.ui.tv_InspectRoute.item(row, 0)
+        if item is None:
+            return None
+        try:
+            return int(item.text())
+        except Exception:
+            return None
+
+    def _find_first_route_row_by_area(self, area_id) -> int:
+        if area_id is None:
+            return -1
+        try:
+            target_area_id = int(area_id)
+        except Exception:
+            return -1
+        for row in range(self.ui.tv_InspectRoute.rowCount()):
+            item = self.ui.tv_InspectRoute.item(row, 0)
+            if item is None:
+                continue
+            raw = item.data(Qt.UserRole)
+            try:
+                if raw is not None and int(raw) == target_area_id:
+                    return row
+            except Exception:
+                continue
+        return -1
+
+    def _adopt_selected_route_if_needed(self) -> bool:
+        if self.routeid:
+            return True
+        row = self._current_route_row()
+        if row < 0:
+            return False
+        route_id = self._current_route_id_from_table()
+        if route_id is None:
+            return False
+        self.routeid = route_id
+        self.on_select(row)
+        return True
 
     def _apply_window_icon(self) -> None:
         icon_path = Path(__file__).resolve().parents[2] / "assets" / "robot.png"
@@ -933,6 +1454,16 @@ class BLL_InspectRoute(QDialog):
             self.ui.lab_selectedRoute.setText(f"当前路线：{record.get('RouteName', '')}")
         self.load_inspectPointByAreaId(record.get("AreaId", record.get("AreaID", None)))
         self.load_inspectPointByRouteId(self.routeid)
+        point_count, path_length, ins_duration = self.calculate_route_metrics(self.routeid)
+        self.ui.txt_PointCount.setValue(point_count)
+        self.ui.txt_PathLength.setValue(path_length)
+        self.ui.txt_InsDuration.setValue(ins_duration)
+        row_item_count = self.ui.tv_InspectRoute.item(row, 3)
+        if row_item_count is not None:
+            row_item_count.setText(str(point_count))
+        row_item_length = self.ui.tv_InspectRoute.item(row, 4)
+        if row_item_length is not None:
+            row_item_length.setText(f"{path_length:.2f}")
 
     # 删除巡检点位
     def on_delete(self) -> None:
@@ -1047,7 +1578,7 @@ class BLL_InspectRoute(QDialog):
             return
 
         recordlist = self.db.fetch_all(
-            "SELECT PointId, PointName, MapX, MapY, YawDeg FROM InspectPoint WHERE AreaId=%s AND Status=1",
+            "SELECT PointId, PointName, MapX, MapY, Longitude, Latitude FROM InspectPoint WHERE AreaId=%s AND Status=1",
             (areaid,),
         )
         table.setColumnCount(3)
@@ -1055,8 +1586,12 @@ class BLL_InspectRoute(QDialog):
             table.insertRow(row)
             table.setItem(row, 0, QTableWidgetItem(str(record.get("PointId", ""))))
             table.setItem(row, 1, QTableWidgetItem(str(record.get("PointName", ""))))
-            pose_text = f"{record.get('MapX', '')},{record.get('MapY', '')},{record.get('YawDeg', 0)}°"
-            table.setItem(row, 2, QTableWidgetItem(pose_text))
+            x = record.get("MapX")
+            y = record.get("MapY")
+            if x is None or y is None:
+                x = record.get("Longitude", "")
+                y = record.get("Latitude", "")
+            table.setItem(row, 2, QTableWidgetItem(f"{x},{y}"))
 
     def load_inspectPointByRouteId(self, route_id) -> None:
         if not self._ensure_route_point_table(show_tip=False):
@@ -1065,11 +1600,9 @@ class BLL_InspectRoute(QDialog):
                 table.setRowCount(0)
             self._clear_route_map()
             return
-
         table = getattr(self.ui, "tv_InspectPoint2", None)
         if table is None:
             return
-
         self._loading_route_points = True
         try:
             table.setRowCount(0)
@@ -1079,7 +1612,7 @@ class BLL_InspectRoute(QDialog):
 
             recordlist = self.db.fetch_all(
                 """
-                SELECT ip.PointId, ip.PointName, ip.MapX, ip.MapY, ip.YawDeg,
+                SELECT ip.PointId, ip.PointName, ip.MapX, ip.MapY, ip.Longitude, ip.Latitude,
                        rp.StayTime, rp.InspectAngle, rp.SortNo
                 FROM InspectRoutePoint rp
                 JOIN InspectPoint ip ON rp.PointId = ip.PointId
@@ -1091,27 +1624,29 @@ class BLL_InspectRoute(QDialog):
             table.setColumnCount(6)
             for row, record in enumerate(recordlist):
                 table.insertRow(row)
-
                 point_id_item = QTableWidgetItem(str(record.get("PointId", "")))
                 point_name_item = QTableWidgetItem(str(record.get("PointName", "")))
-                pose_text = f"{record.get('MapX', '')},{record.get('MapY', '')},{record.get('YawDeg', 0)}°"
-                pose_item = QTableWidgetItem(pose_text)
+                x = record.get("MapX")
+                y = record.get("MapY")
+                if x is None or y is None:
+                    x = record.get("Longitude", "")
+                    y = record.get("Latitude", "")
+                coord_item = QTableWidgetItem(f"{x},{y}")
                 stay_item = QTableWidgetItem(str(record.get("StayTime", 10)))
                 angle_item = QTableWidgetItem(str(record.get("InspectAngle", 0)))
                 sort_item = QTableWidgetItem(str(record.get("SortNo", row + 1)))
 
-                for readonly_item in (point_id_item, point_name_item, pose_item, sort_item):
+                for readonly_item in (point_id_item, point_name_item, coord_item, sort_item):
                     readonly_item.setFlags(readonly_item.flags() & ~Qt.ItemIsEditable)
 
                 table.setItem(row, 0, point_id_item)
                 table.setItem(row, 1, point_name_item)
-                table.setItem(row, 2, pose_item)
+                table.setItem(row, 2, coord_item)
                 table.setItem(row, 3, stay_item)
                 table.setItem(row, 4, angle_item)
                 table.setItem(row, 5, sort_item)
         finally:
             self._loading_route_points = False
-
         self._refresh_route_map(route_id)
 
     def _persist_route_point_order(self) -> None:
@@ -1159,7 +1694,7 @@ class BLL_InspectRoute(QDialog):
     def add_point_to_route(self) -> None:
         if not self._ensure_route_point_table(show_tip=True):
             return
-        if not self.routeid:
+        if not self._adopt_selected_route_if_needed():
             QMessageBox.warning(self, "提示", "请先新建并保存路线")
             return
         selected_row = self.ui.tv_InspectPoint1.currentRow()
@@ -1197,7 +1732,7 @@ class BLL_InspectRoute(QDialog):
     def adjust_sort(self, step: int) -> None:
         if not self._ensure_route_point_table(show_tip=False):
             return
-        if not self.routeid:
+        if not self._adopt_selected_route_if_needed():
             return
         selected_row = self.ui.tv_InspectPoint2.currentRow()
         if selected_row == -1:
@@ -1227,7 +1762,7 @@ class BLL_InspectRoute(QDialog):
     def remove_point_from_route(self) -> None:
         if not self._ensure_route_point_table(show_tip=True):
             return
-        if not self.routeid:
+        if not self._adopt_selected_route_if_needed():
             return
         selected_row = self.ui.tv_InspectPoint2.currentRow()
         if selected_row == -1:
@@ -1260,7 +1795,7 @@ class BLL_InspectRoute(QDialog):
     def save_relation(self) -> None:
         if not self._ensure_route_point_table(show_tip=True):
             return
-        if not self.routeid:
+        if not self._adopt_selected_route_if_needed():
             QMessageBox.warning(self, "提示", "请先选择路线")
             return
 
@@ -1294,16 +1829,30 @@ class BLL_InspectRoute(QDialog):
         self.load_inspectroute()
         QMessageBox.information(self, "完成", "路线点位关系已保存")
 
-    def calculate_distance(self, x1, y1, x2, y2) -> float:
-        return math.hypot(float(x2) - float(x1), float(y2) - float(y1))
+    def calculate_geo_distance(self, lng1, lat1, lng2, lat2) -> float:
+        radius = 6371000
+        lng1_rad = math.radians(float(lng1))
+        lat1_rad = math.radians(float(lat1))
+        lng2_rad = math.radians(float(lng2))
+        lat2_rad = math.radians(float(lat2))
+
+        dlng = lng2_rad - lng1_rad
+        dlat = lat2_rad - lat1_rad
+        a = math.sin(dlat / 2) ** 2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(dlng / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+        return radius * c
+
+    def calculate_xy_distance(self, x1, y1, x2, y2) -> float:
+        dx = float(x2) - float(x1)
+        dy = float(y2) - float(y1)
+        return math.hypot(dx, dy)
 
     def calculate_route_metrics(self, route_id: int):
         if not self._ensure_route_point_table(show_tip=False):
             return 0, 0.0, 0.0
-
         rows = self.db.fetch_all(
             """
-            SELECT rp.PointId, rp.SortNo, rp.StayTime, ip.MapX, ip.MapY
+            SELECT rp.PointId, rp.SortNo, rp.StayTime, ip.MapX, ip.MapY, ip.Longitude, ip.Latitude
             FROM InspectRoutePoint rp
             LEFT JOIN InspectPoint ip ON rp.PointId = ip.PointId
             WHERE rp.RouteId = %s
@@ -1317,11 +1866,10 @@ class BLL_InspectRoute(QDialog):
         for i in range(max(0, point_count - 1)):
             p1 = rows[i]
             p2 = rows[i + 1]
-            if p1.get("MapX") is None or p1.get("MapY") is None:
-                continue
-            if p2.get("MapX") is None or p2.get("MapY") is None:
-                continue
-            path_length += self.calculate_distance(p1["MapX"], p1["MapY"], p2["MapX"], p2["MapY"])
+            if p1.get("MapX") is not None and p1.get("MapY") is not None and p2.get("MapX") is not None and p2.get("MapY") is not None:
+                path_length += self.calculate_xy_distance(p1["MapX"], p1["MapY"], p2["MapX"], p2["MapY"])
+            elif p1.get("Longitude") is not None and p1.get("Latitude") is not None and p2.get("Longitude") is not None and p2.get("Latitude") is not None:
+                path_length += self.calculate_geo_distance(p1["Longitude"], p1["Latitude"], p2["Longitude"], p2["Latitude"])
 
         stay_total = sum(int(r.get("StayTime") or 0) for r in rows)
         move_time = path_length / 0.5 if path_length > 0 else 0

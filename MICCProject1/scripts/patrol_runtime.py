@@ -24,12 +24,16 @@ class PatrolState(str, Enum):
 class PatrolWaypoint:
     point_id: int
     point_name: str
-    map_x: float
-    map_y: float
-    yaw_deg: float
     stay_time: int
     inspect_angle: int
     sort_no: int
+    longitude: Optional[float] = None
+    latitude: Optional[float] = None
+
+    # 运行时投影缓存
+    map_x: Optional[float] = None
+    map_y: Optional[float] = None
+    yaw_deg: Optional[float] = None
 
 @dataclass
 class PatrolPlan:
@@ -68,7 +72,7 @@ class PatrolService:
         rows = self.db.fetch_all(
             """
             SELECT rp.PointId, rp.SortNo, rp.StayTime, rp.InspectAngle,
-                   ip.PointName, ip.MapX, ip.MapY, ip.YawDeg
+                   ip.PointName, ip.Longitude, ip.Latitude, ip.MapX, ip.MapY, ip.YawDeg
             FROM InspectRoutePoint rp
             JOIN InspectPoint ip ON ip.PointId = rp.PointId
             WHERE rp.RouteId = %s
@@ -82,18 +86,27 @@ class PatrolService:
 
         waypoints: list[PatrolWaypoint] = []
         for row in rows:
-            if row.get("MapX") is None or row.get("MapY") is None:
-                return None, f"点位 {row.get('PointName', '')} 缺少ROS地图坐标。"
+            lon = row.get("Longitude")
+            lat = row.get("Latitude")
+            map_x = row.get("MapX")
+            map_y = row.get("MapY")
+
+            if map_x is None or map_y is None:
+                if lon is None or lat is None:
+                    return None, f"?? {row.get('PointName', '')} ?? MapX/MapY ?????????????"
+
             waypoints.append(
                 PatrolWaypoint(
                     point_id=int(row["PointId"]),
                     point_name=str(row.get("PointName", "")),
-                    map_x=float(row["MapX"]),
-                    map_y=float(row["MapY"]),
-                    yaw_deg=float(row.get("YawDeg") or 0.0),
                     stay_time=max(1, int(row.get("StayTime") or 1)),
                     inspect_angle=int(row.get("InspectAngle") or 0),
                     sort_no=int(row.get("SortNo") or 0),
+                    longitude=float(lon) if lon is not None else None,
+                    latitude=float(lat) if lat is not None else None,
+                    map_x=float(map_x) if map_x is not None else None,
+                    map_y=float(map_y) if map_y is not None else None,
+                    yaw_deg=float(row.get("YawDeg") or 0.0) if row.get("YawDeg") is not None else None,
                 )
             )
 
@@ -113,6 +126,59 @@ class PatrolService:
             ),
             "",
         )
+
+
+class GeoWaypointProjector:
+    """
+    过渡版坐标投影器：
+    以任务启动时的“当前位置 GPS + 当前 map 位姿”为原点，
+    把经纬度近似投影到当前 map 坐标系。
+    后续可替换为 navsat_transform_node / fromLL 正式方案。
+    """
+
+    def __init__(self):
+        self._origin_lon = None
+        self._origin_lat = None
+        self._origin_map_x = 0.0
+        self._origin_map_y = 0.0
+        self._origin_yaw_deg = 0.0
+
+    def set_origin(self, lon: float, lat: float, map_x: float = 0.0, map_y: float = 0.0, yaw_deg: float = 0.0):
+        self._origin_lon = float(lon)
+        self._origin_lat = float(lat)
+        self._origin_map_x = float(map_x)
+        self._origin_map_y = float(map_y)
+        self._origin_yaw_deg = float(yaw_deg)
+
+    def ready(self) -> bool:
+        return self._origin_lon is not None and self._origin_lat is not None
+
+    def project(self, lon: float, lat: float) -> tuple[float, float]:
+        if not self.ready():
+            raise RuntimeError("GeoWaypointProjector 尚未设置原点")
+
+        import math
+
+        lat0_rad = math.radians(self._origin_lat)
+        dlon = float(lon) - self._origin_lon
+        dlat = float(lat) - self._origin_lat
+
+        # 近似 ENU 投影
+        east = dlon * 111320.0 * math.cos(lat0_rad)
+        north = dlat * 110540.0
+
+        # 暂不旋转到车体朝向，先直接映射到 map XY
+        x = self._origin_map_x + east
+        y = self._origin_map_y + north
+        return x, y
+
+    def project_waypoints(self, waypoints):
+        for wp in waypoints:
+            x, y = self.project(float(wp.longitude), float(wp.latitude))
+            wp.map_x = x
+            wp.map_y = y
+            if wp.yaw_deg is None:
+                wp.yaw_deg = float(wp.inspect_angle or 0)
 
 class BasePatrolExecutor(QObject):
     state_changed = pyqtSignal(str)
@@ -169,6 +235,8 @@ class MockPatrolExecutor(BasePatrolExecutor):
         self.log_emitted.emit(
             f"已加载路线: {plan.route_name} (点位数: {len(plan.waypoints)})"
         )
+
+
 
     def start(self) -> bool:
         if not self._plan or not self._plan.waypoints:
@@ -252,6 +320,14 @@ class RosPatrolExecutor(BasePatrolExecutor):
         self._cmd_pub = None
         self._result_sub = None
         self._wait_timer = None
+        self._projector = GeoWaypointProjector()
+        self._gps_sub = None
+        self._amcl_sub = None
+        self._last_gps_lon = None
+        self._last_gps_lat = None
+        self._last_map_x = 0.0
+        self._last_map_y = 0.0
+        self._last_map_yaw_deg = 0.0
         self._prepare_ros_runtime()
 
 
@@ -274,17 +350,21 @@ class RosPatrolExecutor(BasePatrolExecutor):
     def _prepare_ros_runtime(self) -> None:
         try:
             import rospy  # type: ignore
-            from geometry_msgs.msg import PoseStamped, Twist  # type: ignore
+            from geometry_msgs.msg import PoseStamped, Twist, PoseWithCovarianceStamped  # type: ignore
+            from sensor_msgs.msg import NavSatFix  # type: ignore
             from actionlib_msgs.msg import GoalID  # type: ignore
             from move_base_msgs.msg import MoveBaseActionResult  # type: ignore
-            from tf.transformations import quaternion_from_euler  # type: ignore
+            from tf.transformations import quaternion_from_euler, euler_from_quaternion  # type: ignore
 
             self._rospy = rospy
             self._PoseStamped = PoseStamped
             self._Twist = Twist
+            self._PoseWithCovarianceStamped = PoseWithCovarianceStamped
+            self._NavSatFix = NavSatFix
             self._GoalID = GoalID
             self._MoveBaseActionResult = MoveBaseActionResult
             self._quaternion_from_euler = quaternion_from_euler
+            self._euler_from_quaternion = euler_from_quaternion
 
             if not rospy.core.is_initialized():
                 rospy.init_node("uav_patrol_executor", anonymous=True, disable_signals=True)
@@ -293,10 +373,79 @@ class RosPatrolExecutor(BasePatrolExecutor):
             self._cancel_pub = rospy.Publisher("/move_base/cancel", GoalID, queue_size=1)
             self._cmd_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=1)
             self._result_sub = rospy.Subscriber("/move_base/result", MoveBaseActionResult, self._on_result)
+            self._gps_sub = rospy.Subscriber("/gps/fix", NavSatFix, self._on_gps_fix)
+            self._amcl_sub = rospy.Subscriber("/amcl_pose", PoseWithCovarianceStamped, self._on_amcl_pose)
             self._ros_ready = True
         except Exception as exc:
             self._ros_ready = False
             self._ros_err = str(exc)
+
+
+    def _on_gps_fix(self, msg) -> None:
+        try:
+            status = getattr(msg.status, "status", 0)
+            if status < 0:
+                return
+            self._last_gps_lon = float(msg.longitude)
+            self._last_gps_lat = float(msg.latitude)
+        except Exception:
+            pass
+
+    def _on_amcl_pose(self, msg) -> None:
+        try:
+            pose = msg.pose.pose
+            self._last_map_x = float(pose.position.x)
+            self._last_map_y = float(pose.position.y)
+
+            q = pose.orientation
+            _, _, yaw = self._euler_from_quaternion([q.x, q.y, q.z, q.w])
+            self._last_map_yaw_deg = float(yaw * 180.0 / 3.141592653589793)
+        except Exception:
+            pass
+
+    def _ensure_waypoints_projected(self) -> tuple[bool, str]:
+        if not self._plan or not self._plan.waypoints:
+            return False, "????"
+
+        already_ok = all(wp.map_x is not None and wp.map_y is not None for wp in self._plan.waypoints)
+        if already_ok:
+            for wp in self._plan.waypoints:
+                if wp.yaw_deg is None:
+                    wp.yaw_deg = float(wp.inspect_angle or 0)
+            return True, ""
+
+        # ????? map ???????????????????
+        if any((wp.longitude is None or wp.latitude is None) for wp in self._plan.waypoints):
+            return False, "?????? MapX/MapY ???????????"
+
+        # ????????GPS + ??map?????????
+        if self._last_gps_lon is not None and self._last_gps_lat is not None:
+            self._projector.set_origin(
+                lon=self._last_gps_lon,
+                lat=self._last_gps_lat,
+                map_x=self._last_map_x,
+                map_y=self._last_map_y,
+                yaw_deg=self._last_map_yaw_deg,
+            )
+            self._projector.project_waypoints(self._plan.waypoints)
+            self.log_emitted.emit(
+                f"?????????????: gps=({self._last_gps_lon:.7f}, {self._last_gps_lat:.7f}), "
+                f"map=({self._last_map_x:.2f}, {self._last_map_y:.2f})"
+            )
+            return True, ""
+
+        # ???????????????????? map(0,0)
+        first = self._plan.waypoints[0]
+        self._projector.set_origin(
+            lon=float(first.longitude),
+            lat=float(first.latitude),
+            map_x=0.0,
+            map_y=0.0,
+            yaw_deg=float(first.inspect_angle or 0),
+        )
+        self._projector.project_waypoints(self._plan.waypoints)
+        self.log_emitted.emit("??????GPS/AMCL???????????????")
+        return True, ""
 
     def start(self) -> bool:
         if not self._plan:
@@ -311,6 +460,13 @@ class RosPatrolExecutor(BasePatrolExecutor):
         if self._state in (PatrolState.STOPPED, PatrolState.EMERGENCY, PatrolState.DONE, PatrolState.FAILED):
             self._idx = 0
             self._waiting = False
+
+        ok, err = self._ensure_waypoints_projected()
+        if not ok:
+            self._set_state(PatrolState.FAILED)
+            self.log_emitted.emit(f"坐标投影失败: {err}")
+            self.finished.emit(False, "projection_failed")
+            return False
 
         if self._state == PatrolState.RUNNING:
             return True
@@ -362,6 +518,13 @@ class RosPatrolExecutor(BasePatrolExecutor):
             return
 
         wp = self._plan.waypoints[self._idx]
+        if wp.map_x is None or wp.map_y is None:
+            self._set_state(PatrolState.FAILED)
+            self.log_emitted.emit(f"点位[{wp.sort_no}] {wp.point_name} 缺少Map坐标，无法下发导航目标。")
+            self.finished.emit(False, "missing_map_xy")
+            return
+
+        yaw_deg = float(wp.yaw_deg if wp.yaw_deg is not None else (wp.inspect_angle or 0))
         msg = self._PoseStamped()
         msg.header.frame_id = "map"
         msg.header.stamp = self._rospy.Time.now()
@@ -369,7 +532,7 @@ class RosPatrolExecutor(BasePatrolExecutor):
         msg.pose.position.y = wp.map_y
         msg.pose.position.z = 0.0
 
-        qx, qy, qz, qw = self._quaternion_from_euler(0.0, 0.0, wp.yaw_deg * 3.141592653589793 / 180.0)
+        qx, qy, qz, qw = self._quaternion_from_euler(0.0, 0.0, yaw_deg * 3.141592653589793 / 180.0)
         msg.pose.orientation.x = qx
         msg.pose.orientation.y = qy
         msg.pose.orientation.z = qz
@@ -377,7 +540,7 @@ class RosPatrolExecutor(BasePatrolExecutor):
 
         self.progress_changed.emit(self._idx + 1, len(self._plan.waypoints), wp.point_name)
         self.log_emitted.emit(
-            f"发送点位[{wp.sort_no}] {wp.point_name}: x={wp.map_x:.2f}, y={wp.map_y:.2f}, yaw={wp.yaw_deg:.1f}°"
+            f"发送点位[{wp.sort_no}] {wp.point_name}: x={wp.map_x:.2f}, y={wp.map_y:.2f}, yaw={yaw_deg:.1f}°"
         )
 
         # 等待 publisher 建立连接，避免第一条 goal 丢失

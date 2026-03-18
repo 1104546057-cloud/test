@@ -1,4 +1,4 @@
-﻿CREATE TABLE IF NOT EXISTS InspectArea (
+CREATE TABLE IF NOT EXISTS InspectArea (
   AreaId   INT AUTO_INCREMENT PRIMARY KEY,
   AreaName VARCHAR(100) NOT NULL,
   AreaCode VARCHAR(100) NOT NULL,
@@ -16,9 +16,9 @@ CREATE TABLE IF NOT EXISTS InspectPoint (
   PointType INT DEFAULT 0,
   Longitude DECIMAL(10,6),
   Latitude  DECIMAL(10,6),
-  MapX      DECIMAL(10,3),
-  MapY      DECIMAL(10,3),
-  YawDeg    DECIMAL(7,2) DEFAULT 0,
+  MapX      DOUBLE,
+  MapY      DOUBLE,
+  YawDeg    DOUBLE,
   Remark    VARCHAR(255),
   Status    TINYINT DEFAULT 1,
   UNIQUE KEY uk_point_code (PointCode),

@@ -1,11 +1,12 @@
-﻿import os
-import subprocess
+import json
+import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QCloseEvent, QIcon, QPixmap
+from PyQt5.QtCore import QByteArray, QBuffer, QIODevice, Qt, QTimer
+from PyQt5.QtGui import QCloseEvent, QIcon, QImage, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -22,6 +23,11 @@ from PyQt5.QtWidgets import (
 )
 from qfluentwidgets import PushButton
 
+try:
+    from PyQt5.QtWebEngineWidgets import QWebEngineView
+except ImportError:
+    QWebEngineView = None
+
 project_root = Path(__file__).resolve().parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
@@ -35,19 +41,17 @@ from MICCProject1.ui.Frm_InspectMag import Ui_Frm_InspectMag
 
 
 class PatrolExecutionWindow(QDialog):
-    RVIZ_CONFIG_PATH = os.getenv(
-        "UAV_RVIZ_CONFIG",
-        str(Path(__file__).resolve().parent.parent / "rviz" / "patrol_map.rviz"),
-    )
-    RVIZ_BIN = os.getenv("UAV_RVIZ_BIN", "rviz")
-
     def __init__(self, owner: "BLL_InspectMag"):
         super().__init__(owner)
         self.owner = owner
         self.setWindowTitle("Patrol Execution Window")
         self.resize(980, 660)
-        self._rviz_process = None
-        self._rviz_started_by_self = False
+        self.web_view = None
+        self._map_placeholder = None
+        self._map_ready = False
+        self._map_meta = None
+        self._pending_route_points = []
+        self._current_plan = None
         self._build_ui()
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._on_refresh_tick)
@@ -79,11 +83,8 @@ class PatrolExecutionWindow(QDialog):
         self.frmMap = QFrame(self)
         map_layout = QVBoxLayout(self.frmMap)
         map_layout.setContentsMargins(8, 8, 8, 8)
-        self.lblMap = QLabel("?????? RViz ?????", self.frmMap)
-        self.lblMap.setMinimumHeight(220)
-        self.lblMap.setAlignment(Qt.AlignCenter)
-        map_layout.addWidget(self.lblMap)
-        root.addWidget(self.frmMap)
+        self.frmMap.setMinimumHeight(280)
+        root.addWidget(self.frmMap, 1)
 
         ctrl = QHBoxLayout()
         self.btnStart = PushButton("Start", self)
@@ -130,7 +131,7 @@ class PatrolExecutionWindow(QDialog):
         self.btnEmergency.clicked.connect(self.owner._emergency_stop)
         self.cmbRefreshRate.currentIndexChanged.connect(self._on_rate_changed)
 
-        self._launch_external_rviz()
+        self._init_map_panel()
 
     def _emit_log(self, message: str) -> None:
         if hasattr(self, "txtLog"):
@@ -141,28 +142,214 @@ class PatrolExecutionWindow(QDialog):
             except Exception:
                 pass
 
-    def _launch_external_rviz(self) -> None:
-        if self._rviz_process is not None and self._rviz_process.poll() is None:
+    def _candidate_map_yamls(self):
+        candidates = []
+        env_yaml = (os.getenv("UAV_MAP_YAML", "") or "").strip()
+        if env_yaml:
+            candidates.append(Path(env_yaml).expanduser())
+        candidates.extend(
+            [
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_test_map.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+            ]
+        )
+        existing = [p for p in candidates if p.exists()]
+        existing.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return existing
+
+    def _parse_map_yaml(self, yaml_path: Path):
+        content = yaml_path.read_text(encoding="utf-8", errors="ignore")
+        image_value = None
+        resolution = None
+        origin = None
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("image:"):
+                image_value = line.split(":", 1)[1].strip().strip("\"'")
+            elif line.startswith("resolution:"):
+                resolution = float(line.split(":", 1)[1].strip())
+            elif line.startswith("origin:"):
+                match = re.search(r"\[([^\]]+)\]", line)
+                if match:
+                    parts = [p.strip() for p in match.group(1).split(",")]
+                    if len(parts) >= 2:
+                        origin = (
+                            float(parts[0]),
+                            float(parts[1]),
+                            float(parts[2]) if len(parts) >= 3 else 0.0,
+                        )
+
+        if not image_value or resolution is None or origin is None:
+            raise ValueError(f"invalid map yaml: {yaml_path}")
+
+        image_path = Path(image_value)
+        if not image_path.is_absolute():
+            image_path = (yaml_path.parent / image_path).resolve()
+        if not image_path.exists():
+            fallback = (yaml_path.parent / Path(image_value).name).resolve()
+            if fallback.exists():
+                image_path = fallback
+        if not image_path.exists():
+            raise FileNotFoundError(f"map image not found: {image_path}")
+
+        qimg = QImage(str(image_path))
+        if qimg.isNull():
+            raise ValueError(f"failed to read map image: {image_path}")
+
+        png_bytes = QByteArray()
+        buffer = QBuffer(png_bytes)
+        if not buffer.open(QIODevice.WriteOnly):
+            raise ValueError("open memory buffer failed")
+        if not qimg.save(buffer, "PNG"):
+            buffer.close()
+            raise ValueError("convert map image to PNG failed")
+        buffer.close()
+
+        return {
+            "yaml_path": str(yaml_path),
+            "map_name": yaml_path.name,
+            "image_data_url": "data:image/png;base64," + bytes(png_bytes.toBase64()).decode("ascii"),
+            "width": int(qimg.width()),
+            "height": int(qimg.height()),
+            "resolution": float(resolution),
+            "origin_x": float(origin[0]),
+            "origin_y": float(origin[1]),
+        }
+
+    def _try_pick_map_meta(self) -> bool:
+        self._map_meta = None
+        for yaml_path in self._candidate_map_yamls():
+            try:
+                self._map_meta = self._parse_map_yaml(yaml_path)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _init_map_panel(self) -> None:
+        layout = self.frmMap.layout()
+        if layout is None:
+            layout = QVBoxLayout(self.frmMap)
+            layout.setContentsMargins(0, 0, 0, 0)
+        else:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                if widget is not None:
+                    widget.deleteLater()
+
+        if QWebEngineView is None:
+            self._map_placeholder = QLabel("地图预览需要安装 PyQtWebEngine", self.frmMap)
+            self._map_placeholder.setAlignment(Qt.AlignCenter)
+            layout.addWidget(self._map_placeholder)
+            self._map_ready = False
+            self._emit_log("地图组件不可用：未安装 PyQtWebEngine")
             return
 
-        config_path = Path(self.RVIZ_CONFIG_PATH).expanduser()
-        cmd = [self.RVIZ_BIN]
-        if config_path.exists():
-            cmd.extend(["-d", str(config_path)])
+        self.web_view = QWebEngineView(self.frmMap)
+        layout.addWidget(self.web_view)
+        self.web_view.loadFinished.connect(self._on_map_load_finished)
+        if self._try_pick_map_meta():
+            self._emit_log(f"已加载执行地图: {self._map_meta.get('yaml_path', '')}")
+        else:
+            self._emit_log("未找到地图 YAML，将仅显示路线示意")
+        self._load_route_map_html()
 
-        try:
-            self._rviz_process = subprocess.Popen(cmd)
-            self._rviz_started_by_self = True
-            if config_path.exists():
-                self._emit_log(f"RViz ????????: {config_path}")
-            else:
-                self._emit_log(f"??? RViz ?????????: {config_path}")
-            self.lblMap.setText("?????? RViz ?????")
-        except Exception as exc:
-            self._rviz_process = None
-            self._rviz_started_by_self = False
-            self.lblMap.setText("?? RViz ???????? ROS ??")
-            self._emit_log(f"?? RViz ??: {exc}")
+    def _load_route_map_html(self) -> None:
+        if self.web_view is None:
+            return
+
+        meta = self._map_meta
+        meta_json = json.dumps(meta, ensure_ascii=False) if meta else "null"
+        legend = f"Patrol Preview | {(meta or {}).get('map_name', 'none')}"
+        html = f"""
+        <!DOCTYPE html><html><head><meta charset='UTF-8'>
+        <style>
+        html,body,#root{{margin:0;width:100%;height:100%;overflow:hidden;background:#0f1722}}
+        #cv{{width:100%;height:100%;display:block;background:#0f1722;cursor:grab}}
+        #bar{{position:absolute;top:8px;right:8px;display:flex;gap:6px;background:rgba(10,22,35,.72);padding:5px;border:1px solid rgba(127,174,214,.35);border-radius:8px}}
+        #bar button{{height:24px;min-width:30px;border:1px solid #4a6f93;background:#16304a;color:#dcefff;border-radius:5px}}
+        #legend{{position:absolute;left:8px;top:8px;padding:4px 8px;border-radius:4px;background:rgba(0,0,0,.5);color:#dce7f3;font:12px Microsoft YaHei}}
+        </style></head><body><div id='root'><canvas id='cv'></canvas><div id='legend'>{legend}</div>
+        <div id='bar'><button id='fit'>F</button><button id='zin'>+</button><button id='zout'>-</button></div></div>
+        <script>
+        const meta={meta_json},hasMap=!!meta,cv=document.getElementById('cv'),ctx=cv.getContext('2d');
+        const st={{s:1,ox:0,oy:0,drag:false,sx:0,sy:0,aox:0,aoy:0}},pts=[]; let img=null;
+        if(hasMap){{img=new Image();img.src=meta.image_data_url;img.onload=()=>draw();}}
+        function fit(){{
+          if(!hasMap){{draw();return;}}
+          const fs=Math.min(cv.width/meta.width,cv.height/meta.height); st.s=fs; st.ox=(cv.width-meta.width*fs)/2; st.oy=(cv.height-meta.height*fs)/2; draw();
+        }}
+        function m2p(x,y){{return {{x:(x-meta.origin_x)/meta.resolution,y:meta.height-1-((y-meta.origin_y)/meta.resolution)}};}}
+        function p2s(p){{return {{x:st.ox+p.x*st.s,y:st.oy+p.y*st.s}};}}
+        function draw(){{
+          cv.width=cv.clientWidth; cv.height=cv.clientHeight; ctx.fillStyle='#0f1722'; ctx.fillRect(0,0,cv.width,cv.height);
+          if(hasMap&&img&&img.complete) ctx.drawImage(img,st.ox,st.oy,meta.width*st.s,meta.height*st.s);
+          if(pts.length<1) return;
+          ctx.strokeStyle='#3a8dff'; ctx.lineWidth=3; ctx.beginPath();
+          for(let i=0;i<pts.length;i++){{const ps=p2s(hasMap?m2p(pts[i].x,pts[i].y):{{x:pts[i].x,y:pts[i].y}}); if(i===0)ctx.moveTo(ps.x,ps.y); else ctx.lineTo(ps.x,ps.y);}}
+          if(pts.length>1) ctx.stroke();
+          ctx.font='12px Microsoft YaHei';
+          for(let i=0;i<pts.length;i++){{const ps=p2s(hasMap?m2p(pts[i].x,pts[i].y):{{x:pts[i].x,y:pts[i].y}}); ctx.beginPath();ctx.arc(ps.x,ps.y,5,0,Math.PI*2);ctx.fillStyle='#ffd34d';ctx.fill();ctx.fillStyle='#fff';ctx.fillText((i+1)+' '+(pts[i].name||''),ps.x+7,ps.y-8);}}
+        }}
+        function zoom(k,cx,cy){{if(!hasMap)return; const prev=st.s; st.s=Math.max(0.02,Math.min(200,st.s*k)); st.ox=cx-(cx-st.ox)*(st.s/prev); st.oy=cy-(cy-st.oy)*(st.s/prev); draw();}}
+        document.getElementById('fit').onclick=fit; document.getElementById('zin').onclick=()=>zoom(1.2,cv.width/2,cv.height/2); document.getElementById('zout').onclick=()=>zoom(0.84,cv.width/2,cv.height/2);
+        cv.onwheel=e=>{{e.preventDefault();const r=cv.getBoundingClientRect();zoom(e.deltaY<0?1.15:0.87,e.clientX-r.left,e.clientY-r.top)}};
+        cv.onmousedown=e=>{{if(e.button!==0)return;st.drag=true;st.sx=e.clientX;st.sy=e.clientY;st.aox=st.ox;st.aoy=st.oy;cv.style.cursor='grabbing';}};
+        window.onmousemove=e=>{{if(!st.drag)return;st.ox=st.aox+(e.clientX-st.sx);st.oy=st.aoy+(e.clientY-st.sy);draw();}};
+        window.onmouseup=()=>{{st.drag=false;cv.style.cursor='grab';}};
+        window.onresize=()=>{{draw(); if(hasMap&&(!img||!img.complete))return; }};
+        window.showRoutePreview=function(arr){{pts.length=0;(arr||[]).forEach(p=>{{const x=Number(p.x),y=Number(p.y);if(Number.isFinite(x)&&Number.isFinite(y))pts.push({{x,y,name:p.name||''}});}}); if(hasMap)fit(); else draw();}};
+        window.clearRoutePreview=function(){{pts.length=0; if(hasMap)fit(); else draw();}};
+        draw(); if(hasMap)fit();
+        </script></body></html>
+        """
+        self._map_ready = False
+        self.web_view.setHtml(html)
+
+    def _on_map_load_finished(self, ok: bool) -> None:
+        self._map_ready = bool(ok)
+        if not self._map_ready:
+            return
+        if self._pending_route_points:
+            self._apply_route_map_points(self._pending_route_points)
+        else:
+            self._clear_route_map()
+
+    def _clear_route_map(self) -> None:
+        self._pending_route_points = []
+        if self.web_view is None or not self._map_ready:
+            return
+        self.web_view.page().runJavaScript("if(window.clearRoutePreview){window.clearRoutePreview();}")
+
+    def _apply_route_map_points(self, points) -> None:
+        self._pending_route_points = list(points or [])
+        if self.web_view is None or not self._map_ready:
+            return
+        payload = json.dumps(self._pending_route_points, ensure_ascii=False)
+        self.web_view.page().runJavaScript(
+            f"if(window.showRoutePreview){{window.showRoutePreview({payload});}}"
+        )
+
+    def set_plan(self, plan) -> None:
+        self._current_plan = plan
+        if plan is None:
+            self._clear_route_map()
+            return
+        points = []
+        for wp in getattr(plan, "waypoints", []) or []:
+            x = getattr(wp, "map_x", None)
+            y = getattr(wp, "map_y", None)
+            if x is None or y is None:
+                x = getattr(wp, "longitude", None)
+                y = getattr(wp, "latitude", None)
+            if x is None or y is None:
+                continue
+            points.append({"x": float(x), "y": float(y), "name": str(getattr(wp, "point_name", ""))})
+        self._apply_route_map_points(points)
 
     def _on_rate_changed(self, _idx: int) -> None:
         interval = int(self.cmbRefreshRate.currentData() or 5000)
@@ -209,24 +396,6 @@ class PatrolExecutionWindow(QDialog):
             if ans != QMessageBox.Yes:
                 event.ignore()
                 return
-
-        if self._rviz_started_by_self and self._rviz_process is not None and self._rviz_process.poll() is None:
-            close_rviz = QMessageBox.question(
-                self,
-                "Prompt",
-                "???????? RViz ???",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes,
-            )
-            if close_rviz == QMessageBox.Yes:
-                try:
-                    self._rviz_process.terminate()
-                    self._rviz_process.wait(timeout=3)
-                except Exception:
-                    try:
-                        self._rviz_process.kill()
-                    except Exception:
-                        pass
 
         super().closeEvent(event)
 
@@ -380,12 +549,14 @@ class BLL_InspectMag(QMainWindow):
         self._bind_executor_events()
         self._append_runtime_log(f"已切换执行器模式: {mode}")
 
-    def _show_execution_window(self) -> None:
+    def _show_execution_window(self, plan=None) -> None:
         if self._exec_win is None:
             self._exec_win = PatrolExecutionWindow(self)
         area = self.ui.txt_InspectArea.currentText()
         route = self.ui.txt_InspectRoute.currentText()
         self._exec_win.set_route_info(area, route)
+        if plan is not None:
+            self._exec_win.set_plan(plan)
         self._exec_win.set_state(self._executor.state.value)
         self._exec_win.show()
         self._exec_win.raise_()
@@ -475,7 +646,7 @@ class BLL_InspectMag(QMainWindow):
             QMessageBox.warning(self, "提示", "巡逻启动失败。")
             return
 
-        self._show_execution_window()
+        self._show_execution_window(plan)
         if self._exec_win is not None:
             self._exec_win.start_refresh()
 
