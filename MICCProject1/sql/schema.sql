@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS InspectRoutePoint (
   RouteId      INT NOT NULL,
   PointId      INT NOT NULL,
   SortNo       INT NOT NULL,
-  StayTime     INT DEFAULT 10,
+  StayTime     INT DEFAULT 5,
   InspectAngle INT DEFAULT 0,
   PRIMARY KEY (RouteId, PointId),
   KEY idx_routepoint_route_sort (RouteId, SortNo),

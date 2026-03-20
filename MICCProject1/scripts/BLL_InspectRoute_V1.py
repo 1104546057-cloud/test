@@ -643,9 +643,9 @@ class BLL_InspectRoute(QDialog):
             candidates.append(Path(env_yaml).expanduser())
         candidates.extend(
             [
-                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_test_map.yaml"),
-                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
-                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
+                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
             ]
         )
         existing = [p for p in candidates if p.exists()]
@@ -1632,7 +1632,7 @@ class BLL_InspectRoute(QDialog):
                     x = record.get("Longitude", "")
                     y = record.get("Latitude", "")
                 coord_item = QTableWidgetItem(f"{x},{y}")
-                stay_item = QTableWidgetItem(str(record.get("StayTime", 10)))
+                stay_item = QTableWidgetItem(str(record.get("StayTime", 5)))
                 angle_item = QTableWidgetItem(str(record.get("InspectAngle", 0)))
                 sort_item = QTableWidgetItem(str(record.get("SortNo", row + 1)))
 
@@ -1718,7 +1718,7 @@ class BLL_InspectRoute(QDialog):
         sort_seed = max_sort[0].get("max_sort", 0) if max_sort else 0
         sort_no = int(sort_seed or 0) + 1
         self.db.execute_query(
-            "INSERT INTO InspectRoutePoint (RouteId, PointId, SortNo, StayTime, InspectAngle) VALUES (%s, %s, %s, 10, 0)",
+            "INSERT INTO InspectRoutePoint (RouteId, PointId, SortNo, StayTime, InspectAngle) VALUES (%s, %s, %s, 5, 0)",
             (self.routeid, point_id, sort_no),
         )
         self.load_inspectPointByRouteId(self.routeid)

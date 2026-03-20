@@ -112,7 +112,10 @@ class DBHelper:
                     self.conn.rollback()
                 except Exception:
                     pass
-            return None
+            sql = (query or "").strip().lower()
+            if sql.startswith(("select", "show", "describe", "explain")):
+                return []
+            return 0
         finally:
             if cursor is not None:
                 try:

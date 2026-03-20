@@ -149,9 +149,9 @@ class PatrolExecutionWindow(QDialog):
             candidates.append(Path(env_yaml).expanduser())
         candidates.extend(
             [
-                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_test_map.yaml"),
-                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
-                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
+                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
             ]
         )
         existing = [p for p in candidates if p.exists()]

@@ -339,9 +339,9 @@ class BLL_InspectPoint(QMainWindow):
             candidates.append(Path(env_yaml).expanduser())
         candidates.extend(
             [
-                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_test_map.yaml"),
-                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
-                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/WHEELTEC.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
+                Path("/home/wheeltec/sysu_ws/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
+                Path("/home/wheeltec/wheeltec_robot/src/turn_on_wheeltec_robot/map/my_new_map_319.yaml"),
             ]
         )
 
@@ -1280,24 +1280,43 @@ class BLL_InspectPoint(QMainWindow):
             QMessageBox.warning(self, "操作提示", "请先选中要删除的巡检点位！")
             return
 
-        reply = QMessageBox.question(self, "确认删除", "确定要删除选中的巡检点位吗？",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            "确定要删除选中的巡检点位吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
         if reply != QMessageBox.Yes:
             return
-        else:
-            ins_item = self.ui.tv_InspectPoint.item(self.ui.tv_InspectPoint.currentRow(), 0)
-            if ins_item is None:
-                return
-            self.pointid = int(ins_item.text())
-            i = self.db.execute_query("DELETE FROM InspectPoint WHERE PointId = %s", (self.pointid,))
-            if (i>0):
-                self.ui.lab_Note.setText("巡检点位删除成功！")
-                self.clear_input()
-                self.load_inspectpoint()
-            else:
-                self.ui.lab_Note.setText("巡检点位删除失败！")
 
-    # 启用巡检点位
+        ins_item = self.ui.tv_InspectPoint.item(self.ui.tv_InspectPoint.currentRow(), 0)
+        if ins_item is None:
+            return
+
+        self.pointid = int(ins_item.text())
+
+        # ????????????????????????????
+        refs = self.db.fetch_all(
+            "SELECT COUNT(1) AS Cnt FROM InspectRoutePoint WHERE PointId = %s",
+            (self.pointid,),
+        )
+        ref_count = int((refs[0].get("Cnt", 0) if refs else 0) or 0)
+        if ref_count > 0:
+            msg = f"该巡检点已被 {ref_count} 条路线关联，请先在巡检路线管理中移除关联后再删除。"
+            self.ui.lab_Note.setText(msg)
+            QMessageBox.warning(self, "删除失败", msg)
+            return
+
+        rows = self.db.execute_query("DELETE FROM InspectPoint WHERE PointId = %s", (self.pointid,))
+        affected = int(rows or 0)
+        if affected > 0:
+            self.ui.lab_Note.setText("巡检点位删除成功！")
+            self.clear_input()
+            self.load_inspectpoint()
+        else:
+            self.ui.lab_Note.setText("巡检点位删除失败！")
+
     def on_enable(self) -> None:
         selection = self.ui.tv_InspectPoint.selectedItems()
         if not selection:
