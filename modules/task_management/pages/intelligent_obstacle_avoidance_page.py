@@ -20,6 +20,7 @@ class IntelligentObstacleAvoidancePage(QtWidgets.QWidget, Ui_TaskExecPage):
             self.setMinimumSize(parent.size())
 
         self._force_active_btn_name = "btnAvoidance"
+        self._first_standalone_show = not embedded
 
         if not embedded:
             self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
@@ -423,12 +424,19 @@ class IntelligentObstacleAvoidancePage(QtWidgets.QWidget, Ui_TaskExecPage):
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()), radius, radius)
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        if not self._embedded and self.isMaximized():
+            self.setMask(QRegion())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._first_standalone_show:
+            self._first_standalone_show = False
+            self.showMaximized()
 
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     w = IntelligentObstacleAvoidancePage()
-    w.resize(1100, 720)
-    w.show()
+    w.showMaximized()
     sys.exit(app.exec_())
 

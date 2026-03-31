@@ -20,6 +20,7 @@ class AutonomousExplorationPage(QtWidgets.QWidget, Ui_Form):
             self.setMinimumSize(parent.size())
 
         self._force_active_btn_name = "btnExplore"
+        self._first_standalone_show = not embedded
 
         if not embedded:
             self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
@@ -421,10 +422,18 @@ class AutonomousExplorationPage(QtWidgets.QWidget, Ui_Form):
         path = QPainterPath()
         path.addRoundedRect(QRectF(self.rect()), radius, radius)
         self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+        if not self._embedded and self.isMaximized():
+            self.setMask(QRegion())
         parent = self.parent()
         if parent and parent.isVisible():
             if self.size() != parent.size():
                 self.resize(parent.size())
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._first_standalone_show:
+            self._first_standalone_show = False
+            self.showMaximized()
 
     def _apply_embedded_layout(self) -> None:
         if hasattr(self, "titleBar"):
@@ -442,7 +451,6 @@ class AutonomousExplorationPage(QtWidgets.QWidget, Ui_Form):
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
     w = AutonomousExplorationPage()
-    w.resize(1200, 720)
-    w.show()
+    w.showMaximized()
     sys.exit(app.exec_())
 

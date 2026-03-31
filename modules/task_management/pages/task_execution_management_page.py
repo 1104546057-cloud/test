@@ -262,7 +262,7 @@ class TaskExecutionManagementPage(QWidget, Ui_TaskExecutionManagement):
 
         page = self._pages.get(key)
         if page:
-            page.show()
+            page.showMaximized()
             page.raise_()
             page.activateWindow()
 
