@@ -6,12 +6,13 @@ from datetime import datetime
 from pathlib import Path
 
 from PyQt5.QtCore import QByteArray, QBuffer, QIODevice, Qt, QTimer
-from PyQt5.QtGui import QCloseEvent, QIcon, QImage, QPixmap
+from PyQt5.QtGui import QColor, QCloseEvent, QIcon, QImage, QPixmap
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
     QFrame,
+    QGraphicsDropShadowEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -419,6 +420,7 @@ class BLL_InspectMag(QMainWindow):
         self._apply_form_style()
         self._replace_buttons()
         self._build_runtime_panel()
+        self._build_sidebar_shell()
         self._polish_summary_layout()
         self._bind_actions()
         self.load_inspectarea()
@@ -498,6 +500,15 @@ class BLL_InspectMag(QMainWindow):
             "background: #ffffff;"
             "border: 1px solid #dbe3ef;"
             "border-radius: 10px;"
+            "}"
+            "QFrame#inspectSideBar {"
+            "background: rgba(255, 255, 255, 150);"
+            "border: none;"
+            "border-radius: 16px;"
+            "}"
+            "QFrame#inspectContentPanel {"
+            "background: transparent;"
+            "border: none;"
             "}"
             "QLabel#lblRuntime, QLabel#statusLabel {"
             "font: 600 13px 'Microsoft YaHei';"
@@ -601,6 +612,101 @@ class BLL_InspectMag(QMainWindow):
             "}"
         )
 
+    def _build_sidebar_shell(self) -> None:
+        if getattr(self, "_sidebar_shell_ready", False):
+            return
+        self._sidebar_shell_ready = True
+
+        root_layout = self.ui.verticalLayout
+        content_items = []
+        while root_layout.count() > 1:
+            content_items.append(root_layout.takeAt(1))
+
+        shell_layout = QHBoxLayout()
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(14)
+
+        self._sidebar_frame = QFrame(self.ui.centralWidget)
+        self._sidebar_frame.setObjectName("inspectSideBar")
+        sidebar_layout = QVBoxLayout(self._sidebar_frame)
+        sidebar_layout.setContentsMargins(10, 10, 10, 10)
+        sidebar_layout.setSpacing(10)
+
+        nav_specs = [
+            ("btnMapBuildNav", "地图构建"),
+            ("btnPatrolNav", "定点巡逻"),
+            ("btnDetectNav", "目标识别"),
+            ("btnTrackNav", "目标跟踪"),
+            ("btnExploreNav", "自主探索"),
+            ("btnAvoidNav", "智能避障"),
+            ("btnAirGroundNav", "空地协同"),
+            ("btnHumanMachineNav", "人机协同"),
+        ]
+        self._sidebar_nav_buttons = []
+        for object_name, text in nav_specs:
+            btn = PushButton(text, self._sidebar_frame)
+            btn.setObjectName(object_name)
+            btn.setMinimumHeight(48)
+            btn.clicked.connect(lambda _, b=btn: self._set_sidebar_active(b))
+            sidebar_layout.addWidget(btn)
+            self._sidebar_nav_buttons.append(btn)
+        sidebar_layout.addStretch(1)
+
+        self._content_frame = QFrame(self.ui.centralWidget)
+        self._content_frame.setObjectName("inspectContentPanel")
+        self._content_layout = QVBoxLayout(self._content_frame)
+        self._content_layout.setContentsMargins(0, 0, 0, 0)
+        self._content_layout.setSpacing(14)
+
+        for item in content_items:
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.setParent(self._content_frame)
+                self._content_layout.addWidget(widget)
+            elif child_layout is not None:
+                self._content_layout.addLayout(child_layout)
+
+        shell_layout.addWidget(self._sidebar_frame)
+        shell_layout.addWidget(self._content_frame, 1)
+        root_layout.addLayout(shell_layout)
+
+        self._sidebar_default_qss = (
+            "QPushButton {"
+            "border-radius: 10px;"
+            "border: 1px solid rgba(0, 0, 0, 10);"
+            "background-color: rgba(255, 255, 255, 200);"
+            "padding: 6px 10px;"
+            "color: #3b4552;"
+            "font-size: 12px;"
+            "}"
+            "QPushButton:hover {"
+            "border: 1px solid rgba(74, 144, 255, 140);"
+            "background-color: rgba(74, 144, 255, 26);"
+            "}"
+            "QPushButton:pressed {"
+            "background-color: rgba(74, 144, 255, 40);"
+            "padding-top: 7px;"
+            "}"
+        )
+        self._sidebar_active_qss = (
+            "QPushButton {"
+            "border-radius: 10px;"
+            "border: 1px solid rgba(74, 144, 255, 160);"
+            "background-color: rgba(74, 144, 255, 26);"
+            "color: #2f3a46;"
+            "font-size: 12px;"
+            "font-weight: 600;"
+            "}"
+        )
+        for btn in self._sidebar_nav_buttons:
+            btn.setStyleSheet(self._sidebar_default_qss)
+        self._set_sidebar_active(getattr(self, "_sidebar_nav_buttons", [None])[1])
+
+    def _set_sidebar_active(self, active_btn) -> None:
+        for btn in getattr(self, "_sidebar_nav_buttons", []):
+            btn.setStyleSheet(self._sidebar_active_qss if btn is active_btn else self._sidebar_default_qss)
+
     def _polish_summary_layout(self) -> None:
         layout = getattr(self.ui, "verticalLayout", None)
         if layout is not None:
@@ -608,6 +714,18 @@ class BLL_InspectMag(QMainWindow):
             layout.setSpacing(14)
 
         self.ui.titleLabel.setFixedHeight(34)
+
+        sidebar = getattr(self, "_sidebar_frame", None)
+        if sidebar is not None:
+            sidebar.setMinimumWidth(96)
+            sidebar.setMaximumWidth(116)
+            shadow = QGraphicsDropShadowEffect(sidebar)
+            shadow.setBlurRadius(26)
+            shadow.setOffset(0, 8)
+            shadow.setColor(QColor(0, 0, 0, 40))
+            sidebar.setGraphicsEffect(shadow)
+            for btn in getattr(self, "_sidebar_nav_buttons", []):
+                btn.setMinimumHeight(48)
 
         button_row = getattr(self.ui, "buttonRow", None)
         if button_row is not None:
@@ -645,6 +763,10 @@ class BLL_InspectMag(QMainWindow):
         if runtime_panel is not None and runtime_panel.layout() is not None:
             runtime_panel.layout().setContentsMargins(14, 14, 14, 14)
             runtime_panel.layout().setSpacing(10)
+
+        content_layout = getattr(self, "_content_layout", None)
+        if content_layout is not None:
+            content_layout.setSpacing(14)
 
         runtime_top = getattr(self, "_runtime_top_layout", None)
         if runtime_top is not None:
