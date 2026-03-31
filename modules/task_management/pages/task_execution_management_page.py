@@ -271,7 +271,7 @@ class TaskExecutionManagementPage(QWidget, Ui_TaskExecutionManagement):
 
         if self._inspect_mag is None or not self._inspect_mag.isVisible():
             self._inspect_mag = BLL_InspectMag()
-        self._inspect_mag.show()
+        self._inspect_mag.showMaximized()
         self._inspect_mag.raise_()
         self._inspect_mag.activateWindow()
 

@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
+    QSizePolicy,
     QVBoxLayout,
 )
 from qfluentwidgets import PushButton
@@ -427,8 +428,8 @@ class BLL_InspectMag(QMainWindow):
         self._bind_executor_events()
 
     def _tune_window_size(self) -> None:
-        self.resize(1024, 646)
-        self.setMinimumSize(980, 620)
+        self.resize(1366, 820)
+        self.setMinimumSize(1180, 720)
 
     def _apply_form_style(self) -> None:
         self.setStyleSheet(
@@ -543,6 +544,7 @@ class BLL_InspectMag(QMainWindow):
         vbox.setSpacing(8)
 
         top = QHBoxLayout()
+        self._runtime_top_layout = top
 
         self.cmbExecutorMode = QComboBox(panel)
         self.cmbExecutorMode.addItem("Windows模拟", userData="mock")
@@ -566,6 +568,7 @@ class BLL_InspectMag(QMainWindow):
             self.btnOpenExecWindow,
         ):
             b.setMinimumHeight(36)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             top.addWidget(b)
         vbox.addLayout(top)
 
@@ -609,6 +612,8 @@ class BLL_InspectMag(QMainWindow):
         button_row = getattr(self.ui, "buttonRow", None)
         if button_row is not None:
             button_row.setSpacing(12)
+            for index in range(button_row.count()):
+                button_row.setStretch(index, 1)
 
         for btn in (
             self.ui.btn_InspectArea,
@@ -616,6 +621,7 @@ class BLL_InspectMag(QMainWindow):
             self.ui.btn_InspectRoute,
         ):
             btn.setMinimumHeight(42)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         self.ui.infoGroup.setMinimumHeight(120)
         self.ui.formLayout.setContentsMargins(16, 16, 16, 14)
@@ -628,7 +634,8 @@ class BLL_InspectMag(QMainWindow):
         self.ui.statusLabel.setContentsMargins(6, 0, 0, 0)
 
         self.cmbExecutorMode.setMinimumHeight(36)
-        self.cmbExecutorMode.setMinimumWidth(140)
+        self.cmbExecutorMode.setMinimumWidth(160)
+        self.cmbExecutorMode.setMaximumWidth(220)
         self.lbl_Runtime.setContentsMargins(6, 0, 0, 0)
         self.progressPatrol.setMinimumHeight(28)
         self.txt_RuntimeLog.setMinimumHeight(150)
@@ -639,6 +646,13 @@ class BLL_InspectMag(QMainWindow):
             runtime_panel.layout().setContentsMargins(14, 14, 14, 14)
             runtime_panel.layout().setSpacing(10)
 
+        runtime_top = getattr(self, "_runtime_top_layout", None)
+        if runtime_top is not None:
+            runtime_top.setSpacing(12)
+            runtime_top.setStretch(0, 0)
+            for index in range(1, runtime_top.count()):
+                runtime_top.setStretch(index, 1)
+
         for btn in (
             self.btn_StartPatrol,
             self.btn_PausePatrol,
@@ -648,6 +662,12 @@ class BLL_InspectMag(QMainWindow):
             self.btnOpenExecWindow,
         ):
             btn.setMinimumHeight(38)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not getattr(self, "_maximized_once", False):
+            self._maximized_once = True
+            self.showMaximized()
 
     def _bind_actions(self) -> None:
         self.ui.btn_InspectArea.clicked.connect(self.on_btn_InspectArea_click)
@@ -691,28 +711,28 @@ class BLL_InspectMag(QMainWindow):
         if plan is not None:
             self._exec_win.set_plan(plan)
         self._exec_win.set_state(self._executor.state.value)
-        self._exec_win.show()
+        self._exec_win.showMaximized()
         self._exec_win.raise_()
         self._exec_win.activateWindow()
 
     def on_btn_InspectArea_click(self):
         if self._inspect_area is None or not self._inspect_area.isVisible():
             self._inspect_area = BLL_InspectArea()
-        self._inspect_area.show()
+        self._inspect_area.showMaximized()
         self._inspect_area.raise_()
         self._inspect_area.activateWindow()
 
     def on_btn_InspectPoint_click(self):
         if self._inspect_point is None or not self._inspect_point.isVisible():
             self._inspect_point = BLL_InspectPoint()
-        self._inspect_point.show()
+        self._inspect_point.showMaximized()
         self._inspect_point.raise_()
         self._inspect_point.activateWindow()
 
     def on_btn_InspectRoute_click(self):
         if self._inspect_route is None or not self._inspect_route.isVisible():
             self._inspect_route = BLL_InspectRoute()
-        self._inspect_route.show()
+        self._inspect_route.showMaximized()
         self._inspect_route.raise_()
         self._inspect_route.activateWindow()
 
@@ -829,5 +849,5 @@ class BLL_InspectMag(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = BLL_InspectMag()
-    win.show()
+    win.showMaximized()
     sys.exit(app.exec_())
