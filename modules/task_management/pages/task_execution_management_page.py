@@ -284,7 +284,7 @@ class TaskExecutionManagementPage(QWidget, Ui_TaskExecutionManagement):
                 on_close=self._close_inspect_flow,
                 on_jump=self._jump_inspect_step,
             )
-        self._inspect_area.show()
+        self._inspect_area.showMaximized()
         self._inspect_area.raise_()
         self._inspect_area.activateWindow()
 
@@ -298,7 +298,7 @@ class TaskExecutionManagementPage(QWidget, Ui_TaskExecutionManagement):
                 on_close=self._close_inspect_flow,
                 on_jump=self._jump_inspect_step,
             )
-        self._inspect_point.show()
+        self._inspect_point.showMaximized()
         self._inspect_point.raise_()
         self._inspect_point.activateWindow()
 
@@ -311,7 +311,7 @@ class TaskExecutionManagementPage(QWidget, Ui_TaskExecutionManagement):
                 on_close=self._close_inspect_flow,
                 on_jump=self._jump_inspect_step,
             )
-        self._inspect_route.show()
+        self._inspect_route.showMaximized()
         self._inspect_route.raise_()
         self._inspect_route.activateWindow()
 

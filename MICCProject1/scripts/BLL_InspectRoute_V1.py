@@ -185,6 +185,12 @@ class BLL_InspectRoute(QDialog):
         if hasattr(self, "_nav_bar"):
             self._reposition_nav()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not getattr(self, "_maximized_once", False):
+            self._maximized_once = True
+            self.showMaximized()
+
     def _on_nav_prev(self) -> None:
         if callable(self._on_prev):
             self.close()

@@ -71,9 +71,11 @@ class BLL_InspectPoint(QMainWindow):
 
     def init_ui(self) -> None:
         self._apply_window_icon()
+        self._tune_form_geometry()
         self._apply_form_style()
         self._replace_top_controls()
         self._inject_yaw_input()
+        self._relayout_point_page()
         self.ui.btn_Save.clicked.connect(self.on_save)
         self.ui.btn_Clear.clicked.connect(self.on_clear)
         self.ui.btn_Delete.clicked.connect(self.on_delete)
@@ -262,8 +264,147 @@ class BLL_InspectPoint(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._relayout_point_page()
         if hasattr(self, "_nav_bar"):
             self._reposition_nav()
+
+    def _tune_form_geometry(self) -> None:
+        self.resize(1366, 820)
+        self.setMinimumSize(1220, 760)
+
+    def _relayout_point_page(self) -> None:
+        margin = 12
+        gap = 14
+        content_width = self.width() - margin * 2
+        content_height = self.height() - margin * 2
+
+        left_width = max(430, min(500, int(content_width * 0.34)))
+        right_width = max(640, content_width - left_width - gap)
+        if left_width + right_width + gap > content_width:
+            left_width = max(410, content_width - right_width - gap)
+
+        status_height = max(420, min(500, int(content_height * 0.6)))
+        list_height = max(230, content_height - status_height - gap)
+        status_height = content_height - list_height - gap
+
+        self.ui.gbox_status.setGeometry(margin, margin, left_width, status_height)
+        self.ui.groupBox_2.setGeometry(margin, margin + status_height + gap, left_width, list_height)
+
+        right_x = margin + left_width + gap
+        search_height = 38
+        search_gap = 12
+        search_btn_width = min(230, max(180, int(right_width * 0.26)))
+        self.ui.txt_MapAddress.setGeometry(
+            right_x,
+            margin,
+            right_width - search_btn_width - search_gap,
+            34,
+        )
+        self.ui.btn_Search.setGeometry(
+            right_x + right_width - search_btn_width,
+            margin,
+            search_btn_width,
+            search_height,
+        )
+
+        map_top = margin + search_height + 12
+        marker_height = 38
+        marker_y = self.height() - margin - marker_height
+        map_height = max(360, marker_y - map_top - 12)
+        self.ui.groupBox.setGeometry(right_x, map_top, right_width, map_height)
+
+        show_width = max(320, int(right_width * 0.62))
+        remove_width = max(170, right_width - show_width - 12)
+        self.ui.btn_showMarkers.setGeometry(right_x, marker_y, show_width, marker_height)
+        self.ui.btn_RemoveMarkers.setGeometry(
+            right_x + right_width - remove_width,
+            marker_y,
+            remove_width,
+            marker_height,
+        )
+
+        self._relayout_point_status(left_width, status_height)
+        self._relayout_point_list(left_width, list_height)
+
+    def _relayout_point_status(self, group_width: int, group_height: int) -> None:
+        label_x = 18
+        labels_width = 86
+        field_x = 118
+        right_margin = 18
+        star_gap = 6
+        row_height = 32
+        field_width = group_width - field_x - right_margin - 18
+
+        self.ui.layoutWidget1.setGeometry(label_x, 36, labels_width, 200)
+        self.ui.gridLayout.setVerticalSpacing(12)
+
+        self.ui.layoutWidget2.setGeometry(field_x, 36, field_width, 158)
+        self.ui.gridLayout_4.setVerticalSpacing(12)
+
+        star_x = field_x + field_width + star_gap
+        self.ui.label_15.setGeometry(star_x, 43, 18, 18)
+        self.ui.label_13.setGeometry(star_x, 87, 18, 18)
+        self.ui.label_14.setGeometry(star_x, 131, 18, 18)
+
+        geo_y = 212
+        lon_width = max(130, (field_width - 88) // 2)
+        lat_width = max(130, field_width - lon_width - 78)
+        self.ui.txt_Longitude.setGeometry(field_x, geo_y, lon_width, row_height)
+        self.ui.label_11.setGeometry(field_x + lon_width + 10, geo_y, 58, 24)
+        self.ui.txt_Latitude.setGeometry(field_x + lon_width + 78, geo_y, lat_width, row_height)
+
+        yaw_y = geo_y + row_height + 16
+        if hasattr(self, "txt_YawDeg"):
+            self.txt_YawDeg.setGeometry(field_x, yaw_y, 140, row_height)
+        if hasattr(self, "lbl_YawReq"):
+            self.lbl_YawReq.setGeometry(field_x + 146, yaw_y + 7, 18, 18)
+        if hasattr(self, "lbl_RemarkEx"):
+            self.lbl_RemarkEx.setGeometry(field_x + 184, yaw_y, 62, 24)
+
+        buttons_height = 34
+        note_height = 24
+        buttons_y = group_height - buttons_height - 26
+        note_y = buttons_y - note_height - 10
+        remark_x = field_x + 184
+        remark_width = max(180, group_width - remark_x - right_margin)
+        remark_height = max(72, note_y - yaw_y - 8)
+        self.ui.txt_Remark.setGeometry(remark_x, yaw_y, remark_width, remark_height)
+        self.ui.lab_Note.setGeometry(label_x, note_y, group_width - label_x - right_margin, note_height)
+        self.ui.layoutWidget_2.setGeometry(
+            max(40, (group_width - 300) // 2),
+            buttons_y,
+            min(300, group_width - 80),
+            buttons_height,
+        )
+
+    def _relayout_point_list(self, group_width: int, group_height: int) -> None:
+        inner_margin = 14
+        controls_width = min(270, group_width - inner_margin * 2)
+        self.ui.layoutWidget.setGeometry(
+            max(inner_margin, group_width - controls_width - inner_margin),
+            16,
+            controls_width,
+            34,
+        )
+        self.ui.gridLayout_3.setHorizontalSpacing(10)
+        for name in ("btn_Delete", "btn_Enable", "btn_Disable"):
+            btn = getattr(self.ui, name, None)
+            if btn:
+                btn.setMinimumHeight(30)
+
+        table_y = self.ui.layoutWidget.y() + self.ui.layoutWidget.height() + 14
+        self.ui.tv_InspectPoint.setGeometry(
+            inner_margin,
+            table_y,
+            group_width - inner_margin * 2,
+            max(150, group_height - table_y - inner_margin),
+        )
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not getattr(self, "_maximized_once", False):
+            self._maximized_once = True
+            self.showMaximized()
 
     def _on_nav_prev(self) -> None:
         if callable(self._on_prev):

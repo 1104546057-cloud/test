@@ -157,6 +157,7 @@ class BLL_InspectArea(QDialog):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._relayout_area_page()
         if hasattr(self, "_nav_bar"):
             self._reposition_nav()
 
@@ -173,14 +174,107 @@ class BLL_InspectArea(QDialog):
 
     def init_ui(self) -> None:
         self._apply_window_icon()
+        self._tune_form_geometry()
         self._apply_form_style()
         self._replace_top_controls()
+        self._relayout_area_page()
         self.ui.btn_Save.clicked.connect(self.on_save)
         self.ui.btn_Clear.clicked.connect(self.on_clear)
         self.ui.btn_Delete.clicked.connect(self.on_delete)
         self.ui.btn_Enable.clicked.connect(self.on_enable)
         self.ui.btn_Disable.clicked.connect(self.on_disable)
         self.ui.tv_InspectArea.clicked.connect(self.on_select)
+
+    def _tune_form_geometry(self) -> None:
+        self.resize(1366, 820)
+        self.setMinimumSize(1180, 720)
+
+    def _relayout_area_page(self) -> None:
+        margin = 12
+        gap = 14
+        content_width = self.width() - margin * 2
+        content_height = self.height() - margin * 2
+
+        left_width = max(430, min(500, int(content_width * 0.38)))
+        right_width = content_width - left_width - gap
+        right_width = max(560, right_width)
+        if left_width + right_width + gap > content_width:
+            left_width = max(400, content_width - right_width - gap)
+
+        self.ui.gbox_status.setGeometry(margin, margin, left_width, content_height)
+        self.ui.groupBox_2.setGeometry(margin + left_width + gap, margin, right_width, content_height)
+
+        self._relayout_area_form(left_width, content_height)
+        self._relayout_area_list(right_width, content_height)
+
+    def _relayout_area_form(self, group_width: int, group_height: int) -> None:
+        label_x = 18
+        field_x = 114
+        right_margin = 18
+        star_gap = 6
+        row_height = 32
+        row_gap = 16
+        top_y = 42
+        field_width = group_width - field_x - right_margin - 18
+
+        self.ui.label.setGeometry(label_x, top_y, 92, 24)
+        self.ui.txt_AreaName.setGeometry(field_x, top_y, field_width, row_height)
+        self.ui.label_13.setGeometry(field_x + field_width + star_gap, top_y + 7, 18, 18)
+
+        y = top_y + row_height + row_gap
+        self.ui.label_8.setGeometry(label_x, y, 92, 24)
+        self.ui.txt_AreaCode.setGeometry(field_x, y, field_width, row_height)
+        self.ui.label_14.setGeometry(field_x + field_width + star_gap, y + 7, 18, 18)
+
+        y += row_height + row_gap
+        desc_height = max(110, min(168, int(group_height * 0.22)))
+        self.ui.label_7.setGeometry(label_x, y, 92, 24)
+        self.ui.txt_AreaDesc.setGeometry(field_x, y, field_width, desc_height)
+
+        y += desc_height + 18
+        buttons_height = 34
+        note_height = 24
+        buttons_y = group_height - buttons_height - 26
+        note_y = buttons_y - note_height - 10
+        remark_height = max(96, note_y - y - 8)
+        self.ui.label_9.setGeometry(label_x, y, 92, 24)
+        self.ui.txt_Remark.setGeometry(field_x, y, field_width, remark_height)
+        self.ui.lab_Note.setGeometry(label_x, note_y, group_width - label_x - right_margin, note_height)
+        self.ui.layoutWidget.setGeometry(
+            max(40, (group_width - 300) // 2),
+            buttons_y,
+            min(300, group_width - 80),
+            buttons_height,
+        )
+
+    def _relayout_area_list(self, group_width: int, group_height: int) -> None:
+        inner_margin = 14
+        controls_width = min(270, group_width - inner_margin * 2)
+        self.ui.layoutWidget1.setGeometry(
+            max(inner_margin, group_width - controls_width - inner_margin),
+            16,
+            controls_width,
+            34,
+        )
+        self.ui.gridLayout_3.setHorizontalSpacing(10)
+        for name in ("btn_Delete", "btn_Enable", "btn_Disable"):
+            btn = getattr(self.ui, name, None)
+            if btn:
+                btn.setMinimumHeight(30)
+
+        table_y = self.ui.layoutWidget1.y() + self.ui.layoutWidget1.height() + 14
+        self.ui.tv_InspectArea.setGeometry(
+            inner_margin,
+            table_y,
+            group_width - inner_margin * 2,
+            max(180, group_height - table_y - inner_margin),
+        )
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not getattr(self, "_maximized_once", False):
+            self._maximized_once = True
+            self.showMaximized()
 
     def load_inspectarea(self) -> None:
 
