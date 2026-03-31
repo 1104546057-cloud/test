@@ -39,15 +39,28 @@ def main() -> int:
     # Required for QtWebEngine widgets (set before QApplication is created)
     QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
     login = LoginPage()
     main_win = MainInterface()
 
     def open_main():
-        login.close()
-        main_win.show()
+        login.hide()
+        main_win._nav_parent_window = None
+        main_win._nav_restore_enabled = False
+        main_win._quit_app_on_close = True
+        main_win.showMaximized()
+        try:
+            main_win.raise_()
+            main_win.activateWindow()
+        except Exception:
+            pass
+        login.password = ""
+        login._pending_login = False
+        login._set_inputs_enabled(True)
+        login.update_dots()
 
     login.login_success.connect(open_main)
-    login.show()
+    login.showMaximized()
     return app.exec_()
 
 
