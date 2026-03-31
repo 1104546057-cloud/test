@@ -414,14 +414,95 @@ class BLL_InspectMag(QMainWindow):
         self._exec_win = None
 
         self._apply_window_icon()
+        self._tune_window_size()
+        self._apply_form_style()
         self._replace_buttons()
         self._build_runtime_panel()
+        self._polish_summary_layout()
         self._bind_actions()
         self.load_inspectarea()
 
         self._patrol_service = PatrolService(self.db)
         self._executor = create_executor(self._executor_mode(), self)
         self._bind_executor_events()
+
+    def _tune_window_size(self) -> None:
+        self.resize(1024, 646)
+        self.setMinimumSize(980, 620)
+
+    def _apply_form_style(self) -> None:
+        self.setStyleSheet(
+            "QMainWindow {"
+            "background: #f7f9fc;"
+            "}"
+            "QWidget#centralWidget {"
+            "background: #f7f9fc;"
+            "}"
+            "QLabel#titleLabel {"
+            "font: 600 16px 'Microsoft YaHei';"
+            "color: #2f3a4a;"
+            "padding: 6px 0 2px 0;"
+            "}"
+            "QGroupBox {"
+            "font: 600 13px 'Microsoft YaHei';"
+            "border: 1px solid #dbe3ef;"
+            "border-radius: 10px;"
+            "margin-top: 10px;"
+            "padding: 10px;"
+            "background: #ffffff;"
+            "}"
+            "QGroupBox::title {"
+            "subcontrol-origin: margin;"
+            "left: 10px;"
+            "padding: 0 6px;"
+            "color: #2f3a4a;"
+            "}"
+            "QLabel {"
+            "font: 13px 'Microsoft YaHei';"
+            "color: #2f3a4a;"
+            "}"
+            "QComboBox, QPlainTextEdit, QProgressBar {"
+            "font: 13px 'Microsoft YaHei';"
+            "border: 1px solid #cfd7e3;"
+            "border-radius: 6px;"
+            "background: #ffffff;"
+            "}"
+            "QComboBox {"
+            "padding: 6px 10px;"
+            "}"
+            "QComboBox::drop-down {"
+            "border: none;"
+            "width: 28px;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            "border: 1px solid #cfd7e3;"
+            "background: #ffffff;"
+            "selection-background-color: #eaf2ff;"
+            "selection-color: #20324d;"
+            "}"
+            "QProgressBar {"
+            "text-align: center;"
+            "padding: 2px;"
+            "min-height: 28px;"
+            "}"
+            "QProgressBar::chunk {"
+            "border-radius: 4px;"
+            "background: #4a90ff;"
+            "}"
+            "QPlainTextEdit {"
+            "padding: 10px;"
+            "selection-background-color: #d8e8ff;"
+            "}"
+            "QFrame#runtimePanel {"
+            "background: #ffffff;"
+            "border: 1px solid #dbe3ef;"
+            "border-radius: 10px;"
+            "}"
+            "QLabel#lblRuntime, QLabel#statusLabel {"
+            "font: 600 13px 'Microsoft YaHei';"
+            "color: #2f3a4a;"
+            "}"
+        )
 
     def _apply_window_icon(self) -> None:
         icon_path = Path(__file__).resolve().parents[2] / "assets" / "robot.png"
@@ -445,8 +526,9 @@ class BLL_InspectMag(QMainWindow):
             idx = layout.indexOf(old)
             old.hide()
             btn = PushButton(text, parent)
-            btn.setMinimumHeight(40)
-            layout.insertWidget(idx, btn)
+            btn.setMinimumHeight(42)
+            btn.setMinimumWidth(0)
+            layout.insertWidget(idx, btn, 1)
             setattr(self.ui, name, btn)
 
     def _build_runtime_panel(self) -> None:
@@ -515,6 +597,57 @@ class BLL_InspectMag(QMainWindow):
             "color: #2f3a4a;"
             "}"
         )
+
+    def _polish_summary_layout(self) -> None:
+        layout = getattr(self.ui, "verticalLayout", None)
+        if layout is not None:
+            layout.setContentsMargins(20, 18, 20, 20)
+            layout.setSpacing(14)
+
+        self.ui.titleLabel.setFixedHeight(34)
+
+        button_row = getattr(self.ui, "buttonRow", None)
+        if button_row is not None:
+            button_row.setSpacing(12)
+
+        for btn in (
+            self.ui.btn_InspectArea,
+            self.ui.btn_InspectPoint,
+            self.ui.btn_InspectRoute,
+        ):
+            btn.setMinimumHeight(42)
+
+        self.ui.infoGroup.setMinimumHeight(120)
+        self.ui.formLayout.setContentsMargins(16, 16, 16, 14)
+        self.ui.formLayout.setHorizontalSpacing(16)
+        self.ui.formLayout.setVerticalSpacing(12)
+
+        for combo in (self.ui.txt_InspectArea, self.ui.txt_InspectRoute):
+            combo.setMinimumHeight(36)
+
+        self.ui.statusLabel.setContentsMargins(6, 0, 0, 0)
+
+        self.cmbExecutorMode.setMinimumHeight(36)
+        self.cmbExecutorMode.setMinimumWidth(140)
+        self.lbl_Runtime.setContentsMargins(6, 0, 0, 0)
+        self.progressPatrol.setMinimumHeight(28)
+        self.txt_RuntimeLog.setMinimumHeight(150)
+
+        runtime_panel = getattr(self, "txt_RuntimeLog", None)
+        runtime_panel = runtime_panel.parentWidget() if runtime_panel is not None else None
+        if runtime_panel is not None and runtime_panel.layout() is not None:
+            runtime_panel.layout().setContentsMargins(14, 14, 14, 14)
+            runtime_panel.layout().setSpacing(10)
+
+        for btn in (
+            self.btn_StartPatrol,
+            self.btn_PausePatrol,
+            self.btn_ResumePatrol,
+            self.btn_StopPatrol,
+            self.btn_Emergency,
+            self.btnOpenExecWindow,
+        ):
+            btn.setMinimumHeight(38)
 
     def _bind_actions(self) -> None:
         self.ui.btn_InspectArea.clicked.connect(self.on_btn_InspectArea_click)
