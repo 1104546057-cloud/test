@@ -4,7 +4,7 @@ from __future__ import annotations
 from PyQt5 import QtWidgets
 from PyQt5.QtCore import pyqtSignal, QPropertyAnimation, QEasingCurve, QPoint, Qt, QTimer, QEvent, QSize
 from PyQt5.QtCore import QSequentialAnimationGroup
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QApplication, QWidget
 from PyQt5.QtGui import QIcon
 from qfluentwidgets import ThemeColor, TransparentToolButton
 from qfluentwidgets import FluentIcon as FIF
@@ -260,6 +260,12 @@ class LoginPage(QWidget):
                     self.move(event.globalPos() - self._drag_pos)
                 return True
         return super().eventFilter(obj, event)
+
+    def closeEvent(self, event):
+        super().closeEvent(event)
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def apply_fluent_dot_style(self):
         accent = ThemeColor.PRIMARY.color()

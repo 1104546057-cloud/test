@@ -19,6 +19,7 @@ from PyQt5.QtGui import QImage, QPixmap
 
 
 sys.path.append(str(Path(__file__).resolve().parents[2]))
+from app.navigation import init_navigation, restore_previous_window
 from UI.generated.content import Ui_Form
 
 
@@ -26,6 +27,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUi(self)
+        init_navigation(self, parent)
 
         self._drag_active = False
         self._drag_pos = None
@@ -301,6 +303,7 @@ class ContentPage(QtWidgets.QWidget, Ui_Form):
         except Exception:
             pass
         event.accept()
+        restore_previous_window(self)
 
 
 

@@ -6,6 +6,7 @@ from PyQt5.QtGui import QColor, QPainterPath, QRegion
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect
 from qfluentwidgets import FluentIcon as FIF, ThemeColor
 
+from app.navigation import init_navigation, restore_previous_window
 from modules.task_management.ui.generated.HoverCruise import Ui_Form
 
 
@@ -13,6 +14,7 @@ class HoverCruisePage(QtWidgets.QWidget, Ui_Form):
     def __init__(self, parent=None, embedded: bool = False):
         super().__init__(parent)
         self.setupUi(self)
+        init_navigation(self, parent)
 
         self._embedded = embedded
         if parent and embedded:
@@ -360,10 +362,18 @@ class HoverCruisePage(QtWidgets.QWidget, Ui_Form):
         for btn in getattr(self, "_sidebar_btns", []):
             btn.clicked.connect(lambda _, b=btn: self.set_active_module(b.objectName()))
 
-        if not self._embedded:
-            btn_map = getattr(self, "btnMapBuild", None)
-            if btn_map:
-                btn_map.clicked.connect(self.back_to_task_management)
+        sidebar_actions = {
+            "btnMapBuild": "map",
+            "btnPointPatrol": "patrol",
+            "btnDetect": "detect",
+            "btnTrack": "track",
+            "btnExplore": "explore",
+            "btnAvoid": "avoid",
+        }
+        for name, key in sidebar_actions.items():
+            btn = getattr(self, name, None)
+            if btn and not self._embedded:
+                btn.clicked.connect(lambda _, k=key: self._switch_sidebar_page(k))
 
 
     def set_active_module(self, name: str) -> None:
@@ -379,6 +389,11 @@ class HoverCruisePage(QtWidgets.QWidget, Ui_Form):
         parent = self.parent()
         if parent and hasattr(parent, "open_map_build"):
             parent.open_map_build()
+
+    def _switch_sidebar_page(self, key: str) -> None:
+        parent = self.parent()
+        if parent and hasattr(parent, "open_sidebar_page"):
+            parent.open_sidebar_page(key, source=self)
 
     def _icon_label(self, icon: FIF, size: int = 16) -> QtWidgets.QLabel:
         lbl = QtWidgets.QLabel()
@@ -505,6 +520,10 @@ class HoverCruisePage(QtWidgets.QWidget, Ui_Form):
             self.bodyLayout.setContentsMargins(0, 0, 0, 0)
             self.bodyLayout.setSpacing(0)
 
+    def closeEvent(self, event):
+        super().closeEvent(event)
+        restore_previous_window(self)
+
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication(sys.argv)
@@ -512,4 +531,3 @@ if __name__ == "__main__":
     w.resize(1150, 720)
     w.show()
     sys.exit(app.exec_())
-

@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
 from qfluentwidgets import FluentIcon as FIF
 from qfluentwidgets import PrimaryPushButton, PushButton, TransparentToolButton
 
+from app.navigation import init_navigation, restore_previous_window
 from .animations import enable_click_animations
 from .communication_dialog import CommunicationDialog
 from .computing_dialog import ComputingDialog
@@ -117,9 +118,10 @@ class MainWindow(QMainWindow):
         ("Timestamp", "记录时间", 180),
     ]
 
-    def __init__(self, db: DeviceDatabase):
-        super().__init__()
+    def __init__(self, db: DeviceDatabase, parent=None):
+        super().__init__(parent)
         self.db = db
+        init_navigation(self, parent)
         self._dragging = False
         self._drag_pos = QPoint()
         self._init_ui()
@@ -609,3 +611,4 @@ class MainWindow(QMainWindow):
         if self.db:
             self.db.close()
         event.accept()
+        restore_previous_window(self)

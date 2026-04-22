@@ -84,11 +84,11 @@ def _create_database(config: dict) -> DeviceDatabase:
         raise
 
 
-def create_asset_management_window() -> MainWindow:
+def create_asset_management_window(parent=None) -> MainWindow:
     """Create AssetManagement main window for embedding into another app."""
     mysql_config = _load_mysql_config()
     db = _create_database(mysql_config)
-    return MainWindow(db)
+    return MainWindow(db, parent=parent)
 
 
 def main():

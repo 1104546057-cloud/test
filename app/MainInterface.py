@@ -4,13 +4,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PyQt5.QtWidgets import QWidget, QGraphicsDropShadowEffect, QPushButton, QMessageBox, QStyle
+from PyQt5.QtWidgets import QApplication, QWidget, QGraphicsDropShadowEffect, QPushButton, QMessageBox, QStyle
 from PyQt5.QtGui import QColor, QIcon
 from PyQt5.QtCore import QSize, Qt, QPoint, QEvent
 from qfluentwidgets import FluentIcon as FIF, ThemeColor
 
 try:
     from .UiLoader import resource_path
+    from .navigation import open_child_window, restore_previous_window
     from UI.generated.MainInterface import Ui_Form
     from modules.basic_control.main import create_basic_control_page
     from modules.status_monitoring.main import create_status_monitoring_page
@@ -22,6 +23,7 @@ except ImportError:  # allow running as a script
 
     sys.path.append(str(Path(__file__).resolve().parents[1]))
     from app.UiLoader import resource_path
+    from app.navigation import open_child_window, restore_previous_window
     from UI.generated.MainInterface import Ui_Form
     from modules.basic_control.main import create_basic_control_page
     from modules.status_monitoring.main import create_status_monitoring_page
@@ -76,9 +78,7 @@ class MainInterface(QWidget):
         root = self.findChild(QWidget, "rootWrap")
         if root:
             add_shadow(root, blur=55, dy=10, alpha=55)
-            parent = root.parentWidget()
-            if parent and parent.layout():
-                parent.layout().setContentsMargins(18, 18, 18, 18)
+            self._apply_root_wrap_margins()
 
         # 2) 如果你发现阴影被裁切：去 Designer 给 rootWrap 的父布局留 margin（20~30）
 
@@ -169,18 +169,18 @@ class MainInterface(QWidget):
     def open_basic_control(self) -> None:
         if not hasattr(self, "_basic_control_page") or self._basic_control_page is None:
             self._basic_control_page = create_basic_control_page(self)
-        self._basic_control_page.show()
+        open_child_window(self, self._basic_control_page)
 
     def open_rc_monitoring(self) -> None:
         if not hasattr(self, "_rc_monitoring_page") or self._rc_monitoring_page is None:
             self._rc_monitoring_page = create_status_monitoring_page(self)
-        self._rc_monitoring_page.show()
+        open_child_window(self, self._rc_monitoring_page)
 
     def open_task_management(self) -> None:
         if not hasattr(self, "_task_management_page") or self._task_management_page is None:
             self._task_management_page = create_task_management_page(self)
         self._apply_task_theme()
-        self._task_management_page.show()
+        open_child_window(self, self._task_management_page)
 
     def open_asset_management(self) -> None:
         try:
@@ -189,10 +189,8 @@ class MainInterface(QWidget):
                 or self._asset_management_page is None
                 or not self._asset_management_page.isVisible()
             ):
-                self._asset_management_page = create_asset_management_window()
-            self._asset_management_page.show()
-            self._asset_management_page.raise_()
-            self._asset_management_page.activateWindow()
+                self._asset_management_page = create_asset_management_window(self)
+            open_child_window(self, self._asset_management_page)
         except Exception as exc:
             QMessageBox.critical(self, "启动失败", f"无法打开设备综合管理模块:\n{exc}")
 
@@ -428,19 +426,32 @@ class MainInterface(QWidget):
         else:
             self.showMaximized()
         self._sync_max_button_icon()
+        self._apply_root_wrap_margins()
+
+    def _current_root_margin(self) -> int:
+        return 0 if self.isMaximized() or self.isFullScreen() else 18
+
+    def _apply_root_wrap_margins(self) -> None:
+        root = self.findChild(QWidget, "rootWrap")
+        if not root:
+            return
+
+        margin = self._current_root_margin()
+        parent = root.parentWidget()
+        if parent and parent.layout():
+            parent.layout().setContentsMargins(margin, margin, margin, margin)
+
+        root.setGeometry(self.rect().adjusted(margin, margin, -margin, -margin))
 
     def changeEvent(self, event):
         super().changeEvent(event)
         if event.type() == QEvent.WindowStateChange:
             self._sync_max_button_icon()
+            self._apply_root_wrap_margins()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        root = self.findChild(QWidget, "rootWrap")
-        if root:
-            margin = 18
-            rect = self.rect().adjusted(margin, margin, -margin, -margin)
-            root.setGeometry(rect)
+        self._apply_root_wrap_margins()
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -452,6 +463,16 @@ class MainInterface(QWidget):
             self.move(event.globalPos() - self._drag_pos)
             event.accept()
 
+    def closeEvent(self, event):
+        quit_app_on_close = getattr(self, "_quit_app_on_close", False)
+        super().closeEvent(event)
+        if quit_app_on_close:
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+            return
+        restore_previous_window(self)
+
 
 def run_main_interface() -> int:
     """Launch the main interface as a standalone window."""
@@ -460,7 +481,7 @@ def run_main_interface() -> int:
 
     app = QApplication(sys.argv)
     w = MainInterface()
-    w.show()
+    w.showMaximized()
     return app.exec_()
 
 

@@ -6,8 +6,18 @@ from pathlib import Path
 import numpy as np
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QCloseEvent, QImage, QPixmap
-from PyQt5.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QPushButton, QTableWidgetItem
+from PyQt5.QtWidgets import (
+    QFileDialog,
+    QFrame,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QTableWidgetItem,
+    QVBoxLayout,
+)
 
+from app.navigation import init_navigation, restore_previous_window
 from modules.task_management.services.detection_service import DetectionService
 from modules.task_management.services.thermal_service import ThermalService
 from modules.task_management.ui.generated.TargetRecognition_new import Ui_MainWindow
@@ -19,11 +29,59 @@ class TargetRecognitionNewPage(QMainWindow, Ui_MainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUi(self)
+        init_navigation(self, parent)
+        self._force_active_btn_name = "btnDetect"
         self._thermal_service = ThermalService()
         self._detection_service = DetectionService()
+        self._setup_sidebar()
         self._apply_fluent_style()
         self._bind_actions()
         self._init_runtime_state()
+
+    def _setup_sidebar(self) -> None:
+        body_layout = getattr(self, "horizontalLayout_body", None)
+        if body_layout is None or hasattr(self, "_sidebar_btns"):
+            return
+
+        self.sidebarFrame = QFrame(self.centralwidget)
+        self.sidebarFrame.setObjectName("sidebarFrame")
+        self.sidebarFrame.setMinimumWidth(96)
+        self.sidebarFrame.setMaximumWidth(110)
+        self.sidebarFrame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+
+        layout = QVBoxLayout(self.sidebarFrame)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        button_defs = [
+            ("btnMapBuild", "地图构建", "map"),
+            ("btnPointPatrol", "定点巡逻", "patrol"),
+            ("btnDetect", "目标识别", "detect"),
+            ("btnTrack", "目标跟踪", "track"),
+            ("btnExplore", "自主探索", "explore"),
+            ("btnAvoid", "智能避障", "avoid"),
+            ("btnAirGround", "空地协同", None),
+            ("btnHumanMachine", "人机协同", None),
+        ]
+
+        self._sidebar_btns = []
+        self._sidebar_routes = {}
+        for obj_name, text, route in button_defs:
+            btn = QPushButton(text, self.sidebarFrame)
+            btn.setObjectName(obj_name)
+            btn.setMinimumHeight(48)
+            btn.setMaximumHeight(48)
+            layout.addWidget(btn)
+            self._sidebar_btns.append(btn)
+            if route:
+                self._sidebar_routes[obj_name] = route
+            setattr(self, obj_name, btn)
+
+        layout.addStretch(1)
+        body_layout.insertWidget(0, self.sidebarFrame)
+
+        if hasattr(self, "tabWidget_left"):
+            self.tabWidget_left.setMinimumWidth(820)
 
     def _apply_fluent_style(self) -> None:
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -142,8 +200,46 @@ class TargetRecognitionNewPage(QMainWindow, Ui_MainWindow):
                 color: #44566c;
                 border-top: 1px solid rgba(34,64,112,16);
             }
+            QFrame#sidebarFrame {
+                background: rgba(255, 255, 255, 150);
+                border: none;
+                border-radius: 16px;
+            }
             """
         )
+
+        side_qss = (
+            "QPushButton {"
+            "border-radius: 10px;"
+            "border: 1px solid rgba(0, 0, 0, 10);"
+            "background-color: rgba(255, 255, 255, 200);"
+            "padding: 6px 10px;"
+            "color: #3b4552;"
+            "font-size: 12px;"
+            "}"
+            "QPushButton:hover {"
+            "border: 1px solid rgba(45, 141, 224, 140);"
+            "background-color: rgba(45, 141, 224, 26);"
+            "}"
+            "QPushButton:pressed {"
+            "background-color: rgba(45, 141, 224, 40);"
+            "padding-top: 7px;"
+            "}"
+        )
+        self._side_default_qss = side_qss
+        self._side_active_qss = (
+            "QPushButton {"
+            "border-radius: 10px;"
+            "border: 1px solid rgba(45, 141, 224, 160);"
+            "background-color: rgba(45, 141, 224, 26);"
+            "color: #2f3a46;"
+            "font-size: 12px;"
+            "font-weight: 600;"
+            "}"
+        )
+        for btn in getattr(self, "_sidebar_btns", []):
+            btn.setStyleSheet(side_qss)
+        self._set_active_sidebar(self._force_active_btn_name)
 
     def _set_btn_role(self, button: QPushButton, role: str) -> None:
         button.setProperty("role", role)
@@ -169,6 +265,33 @@ class TargetRecognitionNewPage(QMainWindow, Ui_MainWindow):
         self.action_open_video.triggered.connect(self._choose_video_file)
         self.action_open_model.triggered.connect(self._choose_weight_file)
         self.action_export_result.triggered.connect(self._export_result)
+
+        for btn in getattr(self, "_sidebar_btns", []):
+            route = self._sidebar_routes.get(btn.objectName())
+            if route:
+                btn.clicked.connect(lambda _, k=route: self._switch_sidebar_page(k))
+            else:
+                btn.clicked.connect(lambda _, b=btn: self._set_active_sidebar(b.objectName()))
+
+    def _set_active_sidebar(self, name: str) -> None:
+        target = self._force_active_btn_name or name
+        for btn in getattr(self, "_sidebar_btns", []):
+            btn.setStyleSheet(self._side_active_qss if btn.objectName() == target else self._side_default_qss)
+
+    def _switch_sidebar_page(self, key: str) -> None:
+        route_to_btn = {
+            "map": "btnMapBuild",
+            "patrol": "btnPointPatrol",
+            "detect": "btnDetect",
+            "track": "btnTrack",
+            "explore": "btnExplore",
+            "avoid": "btnAvoid",
+        }
+        self._set_active_sidebar(route_to_btn.get(key, self._force_active_btn_name))
+
+        parent = self.parent()
+        if parent and hasattr(parent, "open_sidebar_page"):
+            parent.open_sidebar_page(key, source=self)
 
     def _init_runtime_state(self) -> None:
         self._recording = False
@@ -381,3 +504,4 @@ class TargetRecognitionNewPage(QMainWindow, Ui_MainWindow):
         self._runtime_tick.stop()
         self._thermal_service.disconnect()
         super().closeEvent(event)
+        restore_previous_window(self)

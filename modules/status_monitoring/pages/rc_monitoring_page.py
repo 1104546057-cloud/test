@@ -6,6 +6,7 @@ from PyQt5.QtGui import QColor, QPainterPath, QRegion, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import QGraphicsDropShadowEffect
 from qfluentwidgets import FluentIcon as FIF, ThemeColor
 
+from app.navigation import init_navigation, restore_previous_window
 from modules.status_monitoring.services import MonitoringService
 from modules.status_monitoring.ui.generated.RCMonitoring import Ui_Form
 
@@ -14,6 +15,7 @@ class RCMonitoringPage(QtWidgets.QWidget, Ui_Form):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setupUi(self)
+        init_navigation(self, parent)
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -456,6 +458,7 @@ class RCMonitoringPage(QtWidgets.QWidget, Ui_Form):
         if hasattr(self, "_monitoring_service"):
             self._monitoring_service.stop()
         super().closeEvent(event)
+        restore_previous_window(self)
 
 
 if __name__ == "__main__":
